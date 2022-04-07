@@ -1,0 +1,39 @@
+# Parameters to setup experiment.
+# Unique experiment identifier
+# Seed for random number generators (for repeatability).
+
+randomseed: 5852
+imHeight: 480
+imWidth: 640
+
+num_planes: 64
+num_basis: 4
+
+hidden_dim: 64
+num_hidden: 3
+
+vgg_loss: True
+L2_loss: True
+
+mlp_act: relu
+lrelu_slope: 0.01
+pe_order: 3
+
+num_workers: 3
+num_view_all: 9
+num_view_input: 4
+interp: bilinear
+autocast: True
+
+batchsize: 1
+
+normlayer: dumb
+grouptype: 2
+lr: 2e-4
+
+nepoch: 50
+save_img_period: 500
+test_save_img_period: 50
+#save_period:
+
+load_ck: False
