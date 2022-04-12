@@ -6,7 +6,29 @@ import h5py
 import os.path as osp
 import imageio
 from skimage.measure import block_reduce
+import torch
 
+
+HUGE_NUMBER = 1e10
+TINY_NUMBER = 1e-6      # float32 only has 7 decimal digits precision
+
+img_HWC2CHW = lambda x: x.permute(2, 0, 1)
+gray2rgb = lambda x: x.unsqueeze(2).repeat(1, 1, 3)
+
+
+to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
+mse2psnr = lambda x: -10. * np.log(x+TINY_NUMBER) / np.log(10.)
+
+
+def img2mse(x, y, mask=None):
+    if mask is None:
+        return torch.mean((x - y) * (x - y))
+    else:
+        return torch.sum((x - y) * (x - y) * mask) / (torch.sum(mask) * x.shape[0] + TINY_NUMBER)
+
+
+def img2psnr(x, y, mask=None):
+    return mse2psnr(img2mse(x, y, mask).item())
 
 
 def th_save_img(img_name, img):
@@ -16,8 +38,8 @@ def th_save_img(img_name, img):
 def th_save_img_accum(img_name, img, accum_name, accum):
     imageio.imwrite(img_name, img)
     imageio.imwrite(accum_name, accum)
-    
-    
+
+
 def srgb2rgb(srgb):
     ret = np.zeros_like(srgb)
     idx0 = srgb <= 0.04045
@@ -205,3 +227,22 @@ def predToShading(pred, envWidth=32, envHeight=16, SGNum=12):
     shading = np.maximum(shading, 0.0)
 
     return shading
+
+def LSregress(pred, gt, origin):
+    nb = pred.size(0)
+    origSize = pred.size()
+    pred = pred.reshape(nb, -1)
+    gt = gt.reshape(nb, -1)
+
+    coef = (torch.sum(pred * gt, dim=1) / torch.clamp(torch.sum(pred * pred, dim=1), min=1e-5)).detach()
+    coef = torch.clamp(coef, 0.001, 1000)
+    for n in range(0, len(origSize) - 1):
+        coef = coef.unsqueeze(-1)
+    # pred = pred.reshape(origSize)
+    predNew = origin * coef.expand(origSize)
+    return predNew
+
+def cycle(iterable):
+    while True:
+        for x in iterable:
+            yield x
