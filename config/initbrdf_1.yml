@@ -1,0 +1,48 @@
+# Parameters to setup experiment.
+# Unique experiment identifier
+# Seed for random number generators (for repeatability).
+
+distributed: True
+load_ck: False
+
+ray_batch: 65536
+
+num_view_min: 4
+num_view_max: 7
+feature_dims: 32
+
+nepoch: 300
+i_img: 2000
+i_print: 10
+i_weights: 5000
+chunk_size: 262144
+
+lr_feature: 1e-3
+lr_mlp: 1e-4
+lrate_decay_steps: 50000
+lrate_decay_factor: 0.5
+
+albedo_lambda: 4.0
+normal_lambda: 1.0
+rough_lambda: 0.5
+
+randomseed: 5852
+imHeight: 480
+imWidth: 640
+
+vgg_loss: True
+L2_loss: True
+
+num_workers: 5
+num_view_all: 9
+interp: bilinear
+autocast: True
+
+batchsize: 1
+
+normlayer: dumb
+grouptype: 2
+
+
+
+

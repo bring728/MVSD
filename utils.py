@@ -8,16 +8,18 @@ import imageio
 from skimage.measure import block_reduce
 import torch
 
-
 HUGE_NUMBER = 1e10
-TINY_NUMBER = 1e-6      # float32 only has 7 decimal digits precision
+TINY_NUMBER = 1e-6  # float32 only has 7 decimal digits precision
 
 img_HWC2CHW = lambda x: x.permute(2, 0, 1)
+img_CHW2HWC = lambda x: x.permute(1, 2, 0)
+img_rgb2bgr = lambda x: x[[2, 1, 0]]
+img_bgr2rgb = lambda x: x[[2, 1, 0]]
+
 gray2rgb = lambda x: x.unsqueeze(2).repeat(1, 1, 3)
 
-
 to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
-mse2psnr = lambda x: -10. * np.log(x+TINY_NUMBER) / np.log(10.)
+mse2psnr = lambda x: -10. * np.log(x + TINY_NUMBER) / np.log(10.)
 
 
 def img2mse(x, y, mask=None):
@@ -38,6 +40,14 @@ def th_save_img(img_name, img):
 def th_save_img_accum(img_name, img, accum_name, accum):
     imageio.imwrite(img_name, img)
     imageio.imwrite(accum_name, accum)
+
+
+def saveimg_from_torch(filename, tensor, iscolor=True):
+    if iscolor:
+        tensor = img_rgb2bgr(tensor)
+    tensor = img_CHW2HWC(tensor)
+    image = np.clip((tensor.numpy() * 255.0).astype(np.uint8), 0, 255)
+    cv2.imwrite(filename,image)
 
 
 def srgb2rgb(srgb):
@@ -70,11 +80,13 @@ def loadImage(imName, isGama=False, resize=False, W=None, H=None):
 
     return im
 
+
 def loadHdr(imName):
     im = cv2.imread(imName, -1)
     im = np.transpose(im, [2, 0, 1])
     im = im[::-1, :, :]
     return im
+
 
 def get_hdr_scale(hdr, seg, phase):
     length = hdr.shape[0] * hdr.shape[1] * hdr.shape[2]
@@ -89,6 +101,7 @@ def get_hdr_scale(hdr, seg, phase):
     else:
         raise Exception('!!')
     return scale
+
 
 def loadBinary(imName, resize=False, W=None, H=None):
     if not (osp.isfile(imName)):
@@ -106,6 +119,7 @@ def loadBinary(imName, resize=False, W=None, H=None):
             depth = cv2.resize(depth, (W, H), interpolation=cv2.INTER_AREA)
     return depth[np.newaxis, :, :]
 
+
 def loadH5(imName):
     try:
         hf = h5py.File(imName, 'r')
@@ -114,7 +128,8 @@ def loadH5(imName):
     except:
         return None
 
-def loadEnvmap(envName, envRow = 120, envCol = 160):
+
+def loadEnvmap(envName, envRow=120, envCol=160):
     envHeight = 8
     envWidth = 16
 
@@ -228,6 +243,7 @@ def predToShading(pred, envWidth=32, envHeight=16, SGNum=12):
 
     return shading
 
+
 def LSregress(pred, gt, origin):
     nb = pred.size(0)
     origSize = pred.size()
@@ -241,6 +257,7 @@ def LSregress(pred, gt, origin):
     # pred = pred.reshape(origSize)
     predNew = origin * coef.expand(origSize)
     return predNew
+
 
 def cycle(iterable):
     while True:

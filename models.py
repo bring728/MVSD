@@ -15,9 +15,10 @@ def de_parallel(model):
 
 
 class MVSDModel(object):
-    def __init__(self, cfg, gpu, experiment, load_opt=True, load_scheduler=True):
+    def __init__(self, cfg, gpu, experiment, load_opt=True, load_scheduler=True, phase='TRAIN'):
         self.cfg = cfg
         self.gpu = gpu
+        self.phase = phase
         device = torch.device('cuda:{}'.format(gpu))
 
         # create feature extraction network
@@ -40,8 +41,15 @@ class MVSDModel(object):
         self.start_step = self.load_from_ckpt(experiment, load_opt=load_opt, load_scheduler=load_scheduler)
 
         if cfg.distributed:
-            self.brdf_net = torch.nn.parallel.DistributedDataParallel(self.brdf_net, device_ids=[gpu], )
-            self.feature_net = torch.nn.parallel.DistributedDataParallel(self.feature_net, device_ids=[gpu], )
+            if phase == 'TRAIN':
+                self.brdf_net = torch.nn.parallel.DistributedDataParallel(self.brdf_net, device_ids=[gpu], )
+                self.feature_net = torch.nn.parallel.DistributedDataParallel(self.feature_net, device_ids=[gpu], )
+                self.switch_to_train()
+            elif phase == 'TEST':
+                self.switch_to_eval()
+            else:
+                raise Exception('Unrecognized phase for data loader')
+
 
     def switch_to_eval(self):
         self.brdf_net.eval()
@@ -54,14 +62,14 @@ class MVSDModel(object):
     def save_model(self, filename):
         to_save = {'optimizer': self.optimizer.state_dict(),
                    'scheduler': self.scheduler.state_dict(),
-                   'net_coarse': de_parallel(self.brdf_net).state_dict(),
+                   'brdf_net': de_parallel(self.brdf_net).state_dict(),
                    'feature_net': de_parallel(self.feature_net).state_dict()
                    }
 
         torch.save(to_save, filename)
 
     def load_model(self, filename, load_opt=True, load_scheduler=True):
-        if self.cfg.distributed:
+        if self.phase=='TRAIN' and self.cfg.distributed:
             to_load = torch.load(filename, map_location={'cuda:0': 'cuda:%d' % self.gpu})
         else:
             to_load = torch.load(filename)
@@ -74,7 +82,7 @@ class MVSDModel(object):
         self.brdf_net.load_state_dict(to_load['brdf_net'])
         self.feature_net.load_state_dict(to_load['feature_net'])
 
-    def load_from_ckpt(self, out_folder, load_opt=True, load_scheduler=True, force_latest_ckpt=False):
+    def load_from_ckpt(self, out_folder, load_opt=True, load_scheduler=True):
         '''
         load model from existing checkpoints and return the current step
         :param out_folder: the directory that stores ckpts
@@ -87,15 +95,13 @@ class MVSDModel(object):
             ckpts = [os.path.join(out_folder, f)
                      for f in sorted(os.listdir(out_folder)) if f.endswith('.pth')]
 
-        if self.cfg.ckpt_path is not None and not force_latest_ckpt:
-            if os.path.isfile(self.cfg.ckpt_path):  # load the specified ckpt
-                ckpts = [self.cfg.ckpt_path]
-
-        if len(ckpts) > 0 and not self.cfg.no_reload:
+        if len(ckpts) > 0 and (self.cfg.load_ck or self.phase == 'TEST'):
             fpath = ckpts[-1]
             self.load_model(fpath, load_opt, load_scheduler)
-            step = int(fpath[-10:-4])
+            step = fpath[-10:-4]
             print('Reloading from {}, starting at step={}'.format(fpath, step))
+            if step == 'latest':
+                step = 999999
         else:
             print('No ckpts found, training from scratch...')
             step = 0

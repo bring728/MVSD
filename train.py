@@ -17,7 +17,7 @@ from models import MVSDModel
 from utils import *
 
 dataRoot = '/home/happily/Data/OpenRoomsDataset/data/rendering/data_FF_10_640/'
-output = '/home/happily/Data/output/MVSD/'
+outputRoot = '/home/happily/Data/output/MVSD/'
 # dataRoot = 'D:/OpenRoomsDataset/data/rendering/data_FF_10_640/'
 # output = 'D:/MVSD_output/mpi-640'
 
@@ -27,14 +27,14 @@ if not torch.cuda.is_available():
 
 # debug = True
 debug = False
-
+phase = 'TRAIN'
 
 def main():
     if len(sys.argv) < 4:
-        # gpus = '0'
-        gpus = '0,1,2,3,4,5,6,7'
+        gpus = '0'
+        # gpus = '0,1,2,3,4,5,6,7'
         num_gpu = len(gpus.split(','))
-        config = 'initbrdf.yml'
+        config = 'initbrdf_1.yml'
         id = '3456'
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # Arrange GPU devices starting from 0
         os.environ["CUDA_VISIBLE_DEVICES"] = gpus  # Set the GPUs 2 and 3 to use
@@ -58,7 +58,7 @@ def main():
     batchsize = cfg.batchsize
 
     # current_time = datetime.now()
-    experiment = f'{output}/mpi_{normlayer}_{grouptype}_{batchsize}'
+    experiment = f'{outputRoot}/mpi_{normlayer}_{grouptype}_{batchsize}'
     os.makedirs(experiment, exist_ok=True)
 
     with open(os.path.join(experiment, "config.yml"), "w") as f:
@@ -73,10 +73,6 @@ def main():
 def train(gpu, ngpus_per_node, cfg, experiment, id):
     scaler = torch.cuda.amp.GradScaler()
     enable_autocast = cfg.autocast
-    num_workers = cfg.num_workers
-    albedo_lambda = cfg.albedo_lambda
-    normal_lambda = cfg.normal_lambda
-    rough_lambda = cfg.rough_lambda
 
     experiment_name = experiment.split('/')[-1]
 
@@ -86,18 +82,18 @@ def train(gpu, ngpus_per_node, cfg, experiment, id):
     # create training dataset
     ####################################
     pinned = True
-    _Openrooms_dataset = Openrooms_dataset(dataRoot, num_view_min=cfg.num_view_min, num_view_max=cfg.num_view_max, phase='TRAIN',
+    _Openrooms_dataset = Openrooms_dataset(dataRoot, num_view_min=cfg.num_view_min, num_view_max=cfg.num_view_max, phase=phase,
                                            debug=debug)
     _Openrooms_sampler = torch.utils.data.distributed.DistributedSampler(_Openrooms_dataset)
-    openrooms_loader = torch.utils.data.DataLoader(_Openrooms_dataset, batch_size=1, shuffle=False, num_workers=num_workers,
+    openrooms_loader = torch.utils.data.DataLoader(_Openrooms_dataset, batch_size=1, shuffle=False, num_workers=cfg.num_workers,
                                                    pin_memory=pinned, sampler=_Openrooms_sampler)
 
-    val_dataset = Openrooms_dataset(dataRoot, num_view_min=cfg.num_view_min, num_view_max=cfg.num_view_max, phase='TEST', debug=debug)
+    val_dataset = Openrooms_dataset(dataRoot, num_view_min=cfg.num_view_min, num_view_max=cfg.num_view_max, phase=phase, debug=debug)
     val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=1)
     val_loader_iterator = iter(cycle(val_loader))
 
     # Create IBRNet model
-    mvsd_model = MVSDModel(cfg, gpu, experiment)
+    mvsd_model = MVSDModel(cfg, gpu, experiment, phase=phase)
 
     scalars_to_log = {}
     global_step = mvsd_model.start_step + 1
@@ -122,7 +118,7 @@ def train(gpu, ngpus_per_node, cfg, experiment, id):
 
     # iterations = range(start_step, iterations)
     # for global_step in tqdm(iterations):
-    start_time = time0 = time.time()
+    start_time = time.time()
     while global_step < max_iterations:
         np.random.seed()
         for train_data in openrooms_loader:
@@ -166,9 +162,9 @@ def train(gpu, ngpus_per_node, cfg, experiment, id):
 
             roughness = brdf[..., 6:]
 
-            albedo_err = albedo_lambda * torch.sum((albedo - albedo_gt) * (albedo - albedo_gt) * segBRDF) / pixelObjNum / 3.0
-            normal_err = normal_lambda * torch.sum((normal - normal_gt) * (normal - normal_gt) * segAll) / pixelAllNum / 3.0
-            rough_err = rough_lambda * torch.sum((roughness - rough_gt) * (roughness - rough_gt) * segBRDF) / pixelObjNum
+            albedo_err = cfg.albedo_lambda * torch.sum((albedo - albedo_gt) * (albedo - albedo_gt) * segBRDF) / pixelObjNum / 3.0
+            normal_err = cfg.normal_lambda * torch.sum((normal - normal_gt) * (normal - normal_gt) * segAll) / pixelAllNum / 3.0
+            rough_err = cfg.rough_lambda * torch.sum((roughness - rough_gt) * (roughness - rough_gt) * segBRDF) / pixelObjNum
 
             total_err = albedo_err + normal_err + rough_err
             # compute loss
@@ -189,10 +185,9 @@ def train(gpu, ngpus_per_node, cfg, experiment, id):
             if gpu == 0:
                 for k in scalars_to_log.keys():
                     # logstr += ' {}: {:.6f}'.format(k, scalars_to_log[k])
-                    writer.add_scalar(k, scalars_to_log[k], global_step)
+                    writer.add_scalar('train/' + k, scalars_to_log[k], global_step)
                 if global_step % cfg.i_print == 0:
                     # logstr = '{} Epoch: {}  step: {} '.format(experiment_name, epoch, global_step)
-
                     elapsed_sec = time.time() - start_time
                     elapsed_time = str(datetime.timedelta(seconds=elapsed_sec)).split('.')[0]
                     remain_sec = elapsed_sec * max_iterations / global_step
