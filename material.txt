@@ -1,4 +1,0 @@
-Material__arabesque_tile_wall_damaged_arabesque
-Material__italian_venice_floor_mosaic_tile
-Material__scrapped_paint_dusty_yellow
-Material__waved_painted_plates_peeled_blue_paint

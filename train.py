@@ -3,7 +3,7 @@ from tqdm import tqdm
 from render_func import *
 import time
 import numpy as np
-from mvsd_dataset import Openrooms_dataset
+from mvsd_dataset import Openrooms_FF
 import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F

@@ -1,11 +1,98 @@
 from torch.utils.data import Dataset
-from utils import loadHdr, loadImage, loadBinary, get_hdr_scale
+from utils import loadHdr, loadImage, loadBinary, get_hdr_scale, loadEnvmap
 import random
 from utils_geometry import *
 from utils_geometry import _34_to_44
+import scipy.ndimage as ndimage
 
 
-class Openrooms_dataset(Dataset):
+class Openrooms_org(Dataset):
+    def __init__(self, dataRoot, phase='TRAIN', debug=True, env_height=8, env_row=30):
+        self.phase = phase
+        self.env_height = env_height
+        self.env_row = env_row
+
+        if phase == 'TRAIN' and debug:
+            sceneFile = osp.join(dataRoot, 'train_debug.txt')
+        elif phase == 'TEST' and debug:
+            sceneFile = osp.join(dataRoot, 'test_debug.txt')
+        elif phase == 'TRAIN' and not debug:
+            sceneFile = osp.join(dataRoot, 'train.txt')
+        elif phase == 'TEST' and not debug:
+            sceneFile = osp.join(dataRoot, 'test.txt')
+        else:
+            raise Exception('Unrecognized phase for data loader')
+
+        with open(sceneFile, 'r') as fIn:
+            sceneList = fIn.readlines()
+        sceneList = [dataRoot + a.strip() for a in sceneList]
+
+        self.imList = []
+        for shape in sceneList:
+            imNames = sorted(glob.glob(osp.join(shape, 'im_*.hdr')))
+            self.imList += imNames
+
+        self.directlightList = [x.replace('im_', 'imenvDirect_') for x in self.imList]
+        self.directlightList = [x.replace('DiffMat', '') for x in self.directlightList]
+
+        self.normalList = [x.replace('im_', 'imnormal_').replace('hdr', 'png') for x in self.imList]
+        self.normalList = [x.replace('DiffLight', '') for x in self.normalList]
+
+        self.depthList = [x.replace('im_', 'imdepth_').replace('hdr', 'dat') for x in self.imList]
+        self.depthList = [x.replace('DiffLight', '') for x in self.depthList]
+        self.depthList = [x.replace('DiffMat', '') for x in self.depthList]
+
+        self.segList = [x.replace('im_', 'immask_').replace('hdr', 'png') for x in self.imList]
+        self.segList = [x.replace('DiffMat', '') for x in self.segList]
+
+        self.count = len(self.imList)
+        print('group Num: %d' % self.count)
+
+        self.imList = np.array(self.imList).astype(np.string_)
+        self.directlightList = np.array(self.directlightList).astype(np.string_)
+        self.normalList = np.array(self.normalList).astype(np.string_)
+        self.depthList = np.array(self.depthList).astype(np.string_)
+        self.segList = np.array(self.segList).astype(np.string_)
+
+    def __len__(self):
+        return self.count
+
+    def __getitem__(self, ind):
+        name = str(self.imList[ind], encoding='utf-8')
+
+        im = loadHdr(str(self.imList[ind], encoding='utf-8'))
+        seg = 0.5 * (loadImage(str(self.segList[ind], encoding='utf-8')) + 1)[0:1, :, :]
+        scale = get_hdr_scale(im, seg, self.phase)
+        im = np.clip(im * scale, 0, 1.0)
+
+        segArea = np.logical_and(seg > 0.49, seg < 0.51).astype(np.float32)
+        # segEnv = (seg < 0.1).astype(np.float32)
+        segObj = (seg > 0.9)
+        segObj = ndimage.binary_erosion(segObj.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
+        segObj = segObj.astype(np.float32)
+        target_seg = np.concatenate([segObj, segArea + segObj], axis=0)
+
+        # normalize the normal vector so that it will be unit length
+        normal = loadImage(str(self.normalList[ind], encoding='utf-8'))
+        normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0), 1e-5))[np.newaxis, :]).astype(np.float32)
+
+        depth = loadBinary(str(self.depthList[ind], encoding='utf-8'))
+        depth = depth / depth.max()
+
+        envmaps = loadEnvmap(str(self.directlightList[ind], encoding='utf-8'), self.env_height, self.env_row).astype(np.float32)
+        envmaps = envmaps * scale
+
+        rgbd = np.concatenate([im, depth], axis=0).astype(np.float32)
+        batchDict = {'rgbd': rgbd,
+                     'seg': target_seg,
+                     'normal': normal,
+                     'light': envmaps,
+                     'name': name,
+                     }
+        return batchDict
+
+
+class Openrooms_FF(Dataset):
     def __init__(self, dataRoot, num_view_min, num_view_max, num_view_all=9, phase='TRAIN', debug=True):
         self.num_view_min = num_view_min
         self.range = num_view_max - num_view_min + 1
@@ -116,8 +203,9 @@ class Openrooms_dataset(Dataset):
         w2target = np.linalg.inv(src_c2w_list[0])
         src_c2w_list = w2target @ src_c2w_list
 
-        target_gt = np.concatenate([target_albedo.astype(np.float32), target_normal.astype(np.float32), target_rough.astype(np.float32), src_depth_list[0].astype(np.float32),
-                             target_seg.astype(np.float32)], axis=0)
+        target_gt = np.concatenate([target_albedo.astype(np.float32), target_normal.astype(np.float32), target_rough.astype(np.float32),
+                                    src_depth_list[0].astype(np.float32),
+                                    target_seg.astype(np.float32)], axis=0)
         batchDict = {'target_gt': target_gt,
                      'depth_list': np.stack(src_depth_list, 0).astype(np.float32),
                      'im_list': np.stack(src_im_list, 0).astype(np.float32),

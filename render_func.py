@@ -4,7 +4,6 @@ import torch.nn.functional as F
 from collections import OrderedDict
 
 
-
 def compute_projection(pixel_batch, pixel_depth, int_list, c2w_list, depth_list, im_list, featmaps):
     h, w = depth_list.shape[2:]
     w2c_list = torch.inverse(c2w_list)
@@ -92,41 +91,42 @@ def decompose_single_image(model, gpu, chunk_size, pixels, val_data):
     return ret
 
 
-def log_view_to_tb(writer, global_step, cfg, gpu, model, val_data, pixels, prefix=''):
-    model.switch_to_eval()
-    with torch.no_grad():
-        ret = decompose_single_image(model, gpu, cfg.chunk_size, pixels, val_data)
-
-    h, w = val_data['target_gt'].shape[2:]
-
-    albedo_gt = ret['albedo_gt'] ** (1.0 / 2.2)
-    albedo = ret['albedo'] ** (1.0 / 2.2)
-    albedo_all = torch.zeros(3, h, 2 * w)
-    albedo_all[:, :, :w] = albedo_gt
-    albedo_all[:, :, w:] = albedo
-
-    normal_gt = 0.5 * (ret['normal_gt'] + 1)
-    normal = 0.5 * (ret['normal'] + 1)
-    normal_all = torch.zeros(3, h, 2 * w)
-    normal_all[:, :, :w] = normal_gt
-    normal_all[:, :, w:] = normal
-
-    roughness_gt = 0.5 * (ret['roughness_gt'] + 1)
-    roughness = 0.5 * (ret['roughness'] + 1)
-    rough = torch.zeros(1, h, 2 * w)
-    rough[:, :, :w] = roughness_gt
-    rough[:, :, w:] = roughness
-
-    # write the pred/gt rgb images and depths
-    writer.add_image(prefix + 'albedo', albedo_all, global_step)
-    writer.add_image(prefix + 'normal', normal_all, global_step)
-    writer.add_image(prefix + 'roughness', rough, global_step)
-
-    psnr_albedo = img2psnr(ret['albedo'], ret['albedo_gt'], ret['segBRDF'])
-    writer.add_scalar(prefix + 'psnr_albedo', psnr_albedo, global_step)
-    psnr_normal = img2psnr(ret['normal'], ret['normal_gt'], ret['segAll'])
-    writer.add_scalar(prefix + 'psnr_normal', psnr_normal, global_step)
-    psnr_rough = img2psnr(ret['roughness'], ret['roughness_gt'], ret['segBRDF'])
-    writer.add_scalar(prefix + 'psnr_rough', psnr_rough, global_step)
-
-    model.switch_to_train()
+# def log_view_to_tb(writer, global_step, cfg, gpu, model, val_data, pixels, prefix=''):
+#     model.switch_to_eval()
+#     with torch.no_grad():
+#         ret = decompose_single_image(model, gpu, cfg.chunk_size, pixels, val_data)
+#
+#     h, w = val_data['target_gt'].shape[2:]
+#
+#     albedo_gt = ret['albedo_gt'] ** (1.0 / 2.2)
+#     albedo = ret['albedo'] ** (1.0 / 2.2)
+#     albedo_all = torch.zeros(3, h, 2 * w)
+#     albedo_all[:, :, :w] = albedo_gt
+#     albedo_all[:, :, w:] = albedo
+#
+#     normal_gt = 0.5 * (ret['normal_gt'] + 1)
+#     normal = 0.5 * (ret['normal'] + 1)
+#     normal_all = torch.zeros(3, h, 2 * w)
+#     normal_all[:, :, :w] = normal_gt
+#     normal_all[:, :, w:] = normal
+#
+#     roughness_gt = 0.5 * (ret['roughness_gt'] + 1)
+#     roughness = 0.5 * (ret['roughness'] + 1)
+#     rough = torch.zeros(1, h, 2 * w)
+#     rough[:, :, :w] = roughness_gt
+#     rough[:, :, w:] = roughness
+#
+#     # write the pred/gt rgb images and depths
+#     writer.add_image(prefix + 'albedo', albedo_all, global_step)
+#     writer.add_image(prefix + 'normal', normal_all, global_step)
+#     writer.add_image(prefix + 'roughness', rough, global_step)
+#
+#     psnr_albedo = img2psnr(ret['albedo'], ret['albedo_gt'], ret['segBRDF'])
+#     writer.add_scalar(prefix + 'psnr_albedo', psnr_albedo, global_step)
+#     psnr_normal = img2psnr(ret['normal'], ret['normal_gt'], ret['segAll'])
+#     writer.add_scalar(prefix + 'psnr_normal', psnr_normal, global_step)
+#     psnr_rough = img2psnr(ret['roughness'], ret['roughness_gt'], ret['segBRDF'])
+#     writer.add_scalar(prefix + 'psnr_rough', psnr_rough, global_step)
+#
+#     model.switch_to_train()
+#

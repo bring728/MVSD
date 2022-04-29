@@ -1,0 +1,30 @@
+model_type: normal
+
+nepoch: 10
+batchsize: 16
+lrate_decay_steps: 30000
+lrate_decay_factor: 0.5
+
+lr_normal: 5e-4
+normalization: batch
+normal_loss: ang
+
+env_height: 8
+env_row: 30
+SGNum: 4
+lr_light: 1e-4
+
+
+distributed: True
+num_workers: 8
+autocast: True
+randomseed: 5852
+i_img: 2000
+i_print: 10
+
+
+
+
+
+
+

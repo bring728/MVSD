@@ -9,7 +9,9 @@ from skimage.measure import block_reduce
 import torch
 
 HUGE_NUMBER = 1e10
-TINY_NUMBER = 1e-6  # float32 only has 7 decimal digits precision
+TINY_NUMBER = 1e-6 # float32 only has 7 decimal digits precision
+eps = 1e-7
+
 
 img_HWC2CHW = lambda x: x.permute(2, 0, 1)
 img_CHW2HWC = lambda x: x.permute(1, 2, 0)
@@ -20,13 +22,23 @@ gray2rgb = lambda x: x.unsqueeze(2).repeat(1, 1, 3)
 
 to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
 mse2psnr = lambda x: -10. * np.log(x + TINY_NUMBER) / np.log(10.)
+psnr2mse = lambda x: 10 ** -(x / (10.0))
 
 
+# img is B C H W
 def img2mse(x, y, mask=None):
     if mask is None:
         return torch.mean((x - y) * (x - y))
     else:
-        return torch.sum((x - y) * (x - y) * mask) / (torch.sum(mask) * x.shape[0] + TINY_NUMBER)
+        return torch.sum((x - y) * (x - y) * mask) / (torch.sum(mask) + TINY_NUMBER)
+
+# img is B C H W
+def img2angerr(x, y, mask=None):
+    tmp = torch.clamp(torch.sum(x * y, dim=1, keepdim=True), min=-1 + eps, max=1 - eps)
+    if mask is None:
+        return torch.mean(torch.acos(tmp))
+    else:
+        return torch.sum(torch.acos(tmp) * mask) / (torch.sum(mask) + TINY_NUMBER)
 
 
 def img2psnr(x, y, mask=None):
@@ -129,22 +141,20 @@ def loadH5(imName):
         return None
 
 
-def loadEnvmap(envName, envRow=120, envCol=160):
-    envHeight = 8
-    envWidth = 16
+def loadEnvmap(envName, env_height=8, env_row=30):
+    env_col = int(env_row * 4 / 3)
 
     envHeightOrig, envWidthOrig = 16, 32
 
     env = cv2.imread(envName, -1)
-    env = env.reshape(envRow, envHeightOrig, envCol, envWidthOrig, 3)
+    env = env.reshape(env_row, envHeightOrig, env_col, envWidthOrig, 3)
     env = np.ascontiguousarray(env.transpose([4, 0, 2, 1, 3]))
 
-    scale = envHeightOrig / envHeight
+    scale = envHeightOrig / env_height
     if scale > 1:
         env = block_reduce(env, block_size=(1, 1, 1, 2, 2), func=np.mean)
 
-    envInd = np.ones([1, 1, 1], dtype=np.float32)
-    return env, envInd
+    return env
 
 
 def writeEnvToFile(envmaps, envId, envName, nrows=12, ncols=8, envHeight=8, envWidth=16, gap=1):
