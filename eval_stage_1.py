@@ -1,10 +1,9 @@
 from record import *
 import time
 import numpy as np
-from mvsd_dataset import Openrooms_org
-import torch
+from mvsd_dataset import *
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
+import torch
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 import random
@@ -13,23 +12,23 @@ from cfgnode import CfgNode
 from models import *
 from utils import *
 
-dataRoot = '/home/happily/Data/OpenRooms_org/'
-outputRoot = '/home/happily/Data/output/MVSD/stage1'
+dataRoot = '/media/vig-titan-103/mybookduo/OpenRooms_FF'
+outputRoot = '/home/vig-titan-103/Data/MVSD_output/stage1-1'
 
 if not torch.cuda.is_available():
     assert 'gpu isnt ready!'
 
-# debug = True
-debug = False
-phase = 'TRAIN'
-train_type = 'normal'
+#
+# def seed_worker(worker_id):
+#     worker_seed = torch.initial_seed() % 2 ** 32
+#     np.random.seed(worker_seed)
+#     random.seed(worker_seed)
 
-def train(gpu, config):
+
+def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False):
     with open(os.getcwd() + '/config/' + config, "r") as f:
         cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
         cfg = CfgNode(cfg_dict)
-
-    cfg.distributed = False
 
     seed = cfg.randomseed
     random.seed(seed)
@@ -38,29 +37,18 @@ def train(gpu, config):
 
     config = config.replace('.yml', '')
     experiment = f'{outputRoot}/{config}'
-    os.makedirs(experiment, exist_ok=True)
 
-    with open(os.path.join(experiment, "config.yml"), "w") as f:
-        f.write(cfg.dump())  # cfg, f, default_flow_style=False)
+    curr_model = SVNormalModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
 
-    val_dataset = Openrooms_org(dataRoot, 'TEST', debug, cfg.env_height, cfg.env_row)
-    val_loader = DataLoader(val_dataset, batch_size=cfg.batchsize, shuffle=False, num_workers=6)
-
-    curr_model = SVNModel(cfg, gpu, experiment, phase=phase)
-    cpkts = curr_model.ckpts
+    val_dataset = Openrooms_FF_single(dataRoot, cfg, 'TEST', debug)
+    val_loader = DataLoader(val_dataset, batch_size=10, shuffle=False)
 
     writer = SummaryWriter(experiment)
-    for ckpt in cpkts:
-        curr_model.load_model(ckpt)
-        epoch = ckpt[-10:-4]
-        eval_model(writer, curr_model, val_loader, gpu, epoch)
+
+    eval_model(writer, curr_model, None, val_loader, gpu, 31, cfg, 'normal', True)
+
+
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        gpu = 0
-        config = 'stage1_0.yml'
-    else:
-        gpu = int(sys.argv[1])
-        config = sys.argv[2]
-    train(gpu, config)
+    train(gpu=0, num_gpu=1, debug=False, phase='TEST', config='stage1-1_0.yml', is_DDP=False)

@@ -4,14 +4,8 @@
 #CUDA_VISIBLE_DEVICES=2,3 python3 ~/PycharmProjects/MPR_openrooms/train_MPI_DDP.py 2 'MPI_2.yml' 3457 &
 #wait
 
-python3 ~/PycharmProjects/MVSD/eval_stage_1.py 0 'stage1_0.yml' &
-python3 ~/PycharmProjects/MVSD/eval_stage_1.py 1 'stage1_1.yml' &
-python3 ~/PycharmProjects/MVSD/eval_stage_1.py 2 'stage1_2.yml' &
-python3 ~/PycharmProjects/MVSD/eval_stage_1.py 3 'stage1_3.yml' &
-python3 ~/PycharmProjects/MVSD/eval_stage_1.py 4 'stage1_4.yml' &
-python3 ~/PycharmProjects/MVSD/eval_stage_1.py 5 'stage1_5.yml' &
-python3 ~/PycharmProjects/MVSD/eval_stage_1.py 6 'stage1_6.yml' &
-python3 ~/PycharmProjects/MVSD/eval_stage_1.py 7 'stage1_7.yml' &
+
+python3 ~/PycharmProjects/MVSD/train_DDP_wrapper.py 2 'stage1-1_0.yml'
 wait
 
 #output_txt="10_rendered.txt"

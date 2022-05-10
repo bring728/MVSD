@@ -1,0 +1,22 @@
+nepoch: 30
+
+batchsize: 32
+lr: 5e-4
+lrate_decay_steps: 5000
+lrate_decay_factor: 0.5
+
+norm_layer: group
+net_type: unet
+depth_type: mvs
+
+lambda_mse: 0.3
+lambda_ang: 1.0
+
+num_view_all: 9
+num_workers: 6
+autocast: True
+randomseed: 2245
+i_img: 500
+i_print: 10
+
+

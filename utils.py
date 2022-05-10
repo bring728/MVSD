@@ -1,17 +1,15 @@
 import numpy as np
-import struct
+import sys, re, struct
 from PIL import Image
 import cv2
-import h5py
 import os.path as osp
 import imageio
 from skimage.measure import block_reduce
 import torch
 
 HUGE_NUMBER = 1e10
-TINY_NUMBER = 1e-6 # float32 only has 7 decimal digits precision
+TINY_NUMBER = 1e-6  # float32 only has 7 decimal digits precision
 eps = 1e-7
-
 
 img_HWC2CHW = lambda x: x.permute(2, 0, 1)
 img_CHW2HWC = lambda x: x.permute(1, 2, 0)
@@ -41,6 +39,14 @@ def img2angerr(x, y, mask=None):
         return torch.sum(torch.acos(tmp) * mask) / (torch.sum(mask) + TINY_NUMBER)
 
 
+# img is B C H W
+def img2log_mse(x, y, mask=None):
+    if mask is None:
+        return torch.mean(torch.log(x + 1.0) - torch.log(y + 1.0)) * (torch.log(x + 1.0) - torch.log(y + 1.0))
+    else:
+        return torch.sum((torch.log(x + 1.0) - torch.log(y + 1.0)) * (torch.log(x + 1.0) - torch.log(y + 1.0)) * mask) / (torch.sum(mask) + TINY_NUMBER)
+
+
 def img2psnr(x, y, mask=None):
     return mse2psnr(img2mse(x, y, mask).item())
 
@@ -54,12 +60,44 @@ def th_save_img_accum(img_name, img, accum_name, accum):
     imageio.imwrite(accum_name, accum)
 
 
+def tocuda(vars, gpu):
+    if isinstance(vars, list):
+        out = []
+        for var in vars:
+            if isinstance(var, torch.Tensor):
+                out.append(var.to(gpu))
+            elif isinstance(var, str):
+                out.append(var)
+            else:
+                raise NotImplementedError("invalid input type {} for tensor2numpy".format(type(vars)))
+        return out
+    elif isinstance(vars, dict):
+        out = {}
+        for k in vars:
+            if isinstance(vars[k], torch.Tensor):
+                out[k] = vars[k].to(gpu)
+            elif isinstance(vars[k], str):
+                out[k] = vars[k]
+            elif isinstance(vars[k], list):
+                out[k] = vars[k]
+            else:
+                raise NotImplementedError("invalid input type {} for tensor2numpy".format(type(vars)))
+        return out
+
+
+def cvimg_from_torch(tensor, iscolor=True):
+    if iscolor:
+        tensor = img_rgb2bgr(tensor)
+    tensor = img_CHW2HWC(tensor)
+    image = np.clip((tensor.detach().cpu().numpy() * 255.0), 0, 255).astype(np.uint8)
+    return image
+
 def saveimg_from_torch(filename, tensor, iscolor=True):
     if iscolor:
         tensor = img_rgb2bgr(tensor)
     tensor = img_CHW2HWC(tensor)
     image = np.clip((tensor.numpy() * 255.0).astype(np.uint8), 0, 255)
-    cv2.imwrite(filename,image)
+    cv2.imwrite(filename, image)
 
 
 def srgb2rgb(srgb):
@@ -89,12 +127,17 @@ def loadImage(imName, isGama=False, resize=False, W=None, H=None):
     if len(im.shape) == 2:
         im = im[:, np.newaxis]
     im = np.transpose(im, [2, 0, 1])
-
     return im
 
 
 def loadHdr(imName):
+    if not (osp.isfile(imName)):
+        print(imName)
+        raise Exception(imName, 'image doesnt exists')
     im = cv2.imread(imName, -1)
+    if im is None:
+        print(imName)
+        raise Exception(imName, 'image doesnt exists 2')
     im = np.transpose(im, [2, 0, 1])
     im = im[::-1, :, :]
     return im
@@ -132,85 +175,29 @@ def loadBinary(imName, resize=False, W=None, H=None):
     return depth[np.newaxis, :, :]
 
 
-def loadH5(imName):
-    try:
-        hf = h5py.File(imName, 'r')
-        im = np.array(hf.get('data'))
-        return im
-    except:
-        return None
 
-
-def loadEnvmap(envName, env_height=8, env_row=30):
-    env_col = int(env_row * 4 / 3)
-
+def loadEnvmap(envName, env_height=8, env_width=16, env_rows=120, env_cols=160):
     envHeightOrig, envWidthOrig = 16, 32
 
     env = cv2.imread(envName, -1)
-    env = env.reshape(env_row, envHeightOrig, env_col, envWidthOrig, 3)
-    env = np.ascontiguousarray(env.transpose([4, 0, 2, 1, 3]))
+    # env = (np.clip(img_rgb2bgr(env.transpose(2,0,1)).transpose(1,2,0), 0, 1) * 255.0).astype(np.uint8)
+    # cv2.imwrite('a.png', env)
+    if not env is None:
+        env = env.reshape(env_rows, envHeightOrig, env_cols, envWidthOrig, 3)
+        env = np.ascontiguousarray(env.transpose([4, 0, 2, 1, 3]))
 
-    scale = envHeightOrig / env_height
-    if scale > 1:
-        env = block_reduce(env, block_size=(1, 1, 1, 2, 2), func=np.mean)
+        scale = envHeightOrig / env_height
+        if scale > 1:
+            env = block_reduce(env, block_size=(1, 1, 1, 2, 2), func=np.mean)
+            env.transpose([1, 3, 2, 4, 0])
+            envInd = np.ones([1, 1, 1], dtype=np.float32)
+            return env, envInd
 
-    return env
-
-
-def writeEnvToFile(envmaps, envId, envName, nrows=12, ncols=8, envHeight=8, envWidth=16, gap=1):
-    envmap = envmaps[envId, :, :, :, :, :].data.cpu().numpy()
-    envmap = np.transpose(envmap, [1, 2, 3, 4, 0])
-    envRow, envCol = envmap.shape[0], envmap.shape[1]
-
-    interY = int(envRow / nrows)
-    interX = int(envCol / ncols)
-
-    lnrows = len(np.arange(0, envRow, interY))
-    lncols = len(np.arange(0, envCol, interX))
-
-    lenvHeight = lnrows * (envHeight + gap) + gap
-    lenvWidth = lncols * (envWidth + gap) + gap
-
-    envmapLarge = np.zeros([lenvHeight, lenvWidth, 3], dtype=np.float32) + 1.0
-    for r in range(0, envRow, interY):
-        for c in range(0, envCol, interX):
-            rId = int(r / interY)
-            cId = int(c / interX)
-
-            rs = rId * (envHeight + gap)
-            cs = cId * (envWidth + gap)
-            envmapLarge[rs: rs + envHeight, cs: cs + envWidth, :] = envmap[r, c, :, :, :]
-
-    envmapLarge = np.clip(envmapLarge, 0, 1)
-    envmapLarge = (255 * (envmapLarge ** (1.0 / 2.2))).astype(np.uint8)
-    cv2.imwrite(envName, envmapLarge[:, :, ::-1])
-
-
-def writeNumpyEnvToFile(envmap, envName, nrows=12, ncols=8, envHeight=8, envWidth=16, gap=1):
-    envRow, envCol = envmap.shape[0], envmap.shape[1]
-
-    interY = int(envRow / nrows)
-    interX = int(envCol / ncols)
-
-    lnrows = len(np.arange(0, envRow, interY))
-    lncols = len(np.arange(0, envCol, interX))
-
-    lenvHeight = lnrows * (envHeight + gap) + gap
-    lenvWidth = lncols * (envWidth + gap) + gap
-
-    envmapLarge = np.zeros([lenvHeight, lenvWidth, 3], dtype=np.float32) + 1.0
-    for r in range(0, envRow, interY):
-        for c in range(0, envCol, interX):
-            rId = int(r / interY)
-            cId = int(c / interX)
-
-            rs = rId * (envHeight + gap)
-            cs = cId * (envWidth + gap)
-            envmapLarge[rs: rs + envHeight, cs: cs + envWidth, :] = envmap[r, c, :, :, :]
-
-    envmapLarge = np.clip(envmapLarge, 0, 1)
-    envmapLarge = (255 * envmapLarge ** (1.0 / 2.2)).astype(np.uint8)
-    cv2.imwrite(envName, envmapLarge[:, :, ::-1])
+        else:
+            env = np.zeros([3, env_rows, env_cols, env_height, env_width], dtype=np.float32)
+            envInd = np.zeros([1, 1, 1], dtype=np.float32)
+            print('Warning: the envmap %s does not exist.' % envName)
+            return env, envInd
 
 
 def predToShading(pred, envWidth=32, envHeight=16, SGNum=12):
@@ -273,3 +260,39 @@ def cycle(iterable):
     while True:
         for x in iterable:
             yield x
+
+def outdir2xml(scene):
+    a = scene.split('data_FF_10_640')
+    b = a[1].split('/')
+    scene_name = b[2]
+    return a[0] + 'scenes/' + b[1].split('_')[1] + '/' + scene_name + '/' + b[1].split('_')[0] + '_FF.xml'
+
+def xml2camtxt(xml, k):
+    scene_type = xml.split('/')[-1].split('_')[0]
+    return f'{osp.dirname(xml)}/{k}_cam_{scene_type}_FF.txt'
+
+def xml2outdir(xml):
+    split = xml.split('.')[0].split('/')
+    root = xml.split('scenes')[0] + 'data_FF_10_640'
+    if 'mainDiffLight' in split[-1]:
+        scene_type = 'mainDiffLight'
+    elif 'mainDiffMat' in split[-1]:
+        scene_type = 'mainDiffMat'
+    else:
+        scene_type = 'main'
+    scene_name = split[-2]
+    xml_name = split[-3]
+    return osp.join(root, scene_type + '_' + xml_name, scene_name)
+
+def camtxt2outdir(camtxt):
+    split = camtxt.split('.')[0].split('/')
+    root = camtxt.split('scenes')[0] + 'data_FF_10_640'
+    if 'mainDiffLight' in split[-1]:
+        scene_type = 'mainDiffLight'
+    elif 'mainDiffMat' in split[-1]:
+        scene_type = 'mainDiffMat'
+    else:
+        scene_type = 'main'
+    scene_name = split[-2]
+    xml_name = split[-3]
+    return osp.join(root, scene_type + '_' + xml_name, scene_name)
