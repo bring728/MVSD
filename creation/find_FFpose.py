@@ -12,6 +12,7 @@ depth_to_baseline = 0.06
 min_baseline = 0.08
 max_baseline = 0.28
 
+a=0
 
 def image_concater(im_list):
     num_img = len(im_list)
