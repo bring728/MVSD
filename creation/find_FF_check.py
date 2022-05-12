@@ -12,7 +12,6 @@ ff_renew_root = '/home/vig-titan2/Data/@@FF_renew/'
 renew_dir = ff_renew_root + 'rendering/'
 
 num_gpu = 2
-depth_to_baseline = 0.06
 debug = False
 
 

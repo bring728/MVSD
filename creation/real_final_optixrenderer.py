@@ -30,7 +30,7 @@ dataroot = '/Data/OpenRoomsDataset/data/rendering/data_FF_10_640/'
 intermediate_path = '/Data/intermediate_path/'
 optix_output_path = '/Data/optix_output/'
 logroot = '/Data/logs/'
-num_p = 4
+num_p = 2
 
 
 def work(xml, camtxt, outdir, k, num_pushed, mode, outdir_tmp, q):
@@ -128,8 +128,8 @@ if __name__ == "__main__":
                 num_png = len([a for a in all_files if a.endswith('.png')])
                 num_npy = len([a for a in all_files if a.endswith('.npy')])
 
-                if num_rgbe == 9 * num_npy and num_hdr >= 9 * num_npy and num_dat == 9 * num_npy and num_png == 36 * num_npy:
-                    print(f'{scene} is done. moving to optix_output.')
+                if num_rgbe == 9 * num_npy and num_hdr == 18 * num_npy and num_dat == 9 * num_npy and num_png == 36 * num_npy:
+                    logger.debug(f'{scene} is done. moving to optix_output.')
                     #command = f'sshpass -p 8501 scp -r {scene} vig-titan-103@161.122.115.103:/media/vig-titan-103/mybookduo/OpenRooms_FF/{outdir_type}/'
                     #os.system(command)
 
@@ -155,7 +155,12 @@ if __name__ == "__main__":
             logger.debug(f'all scenes : {num_pushed}, waiting additional data...')
             time.sleep(120)
 
-        outdir = sorted(glob.glob(osp.join(sorted(glob.glob(osp.join(dataroot, '*')))[0], '*')))[0]
+        all_scene = []
+        scene_type_list = sorted(glob.glob(osp.join(dataroot, '*')))
+        for scene_type in scene_type_list:
+            all_scene += sorted(glob.glob(osp.join(scene_type, '*')))
+
+        outdir = all_scene[0]
         xml = scene2xml(outdir)
 
         outdir_type = outdir.split('/')[-2]

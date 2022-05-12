@@ -8,11 +8,10 @@ from transformation import *
 
 
 openroomsRoot = '/home/vig-titan2/Data/OpenRooms_findpose/data/rendering/'
-root_renderer = '/home/vig-titan2/Downloads'
-renderer = root_renderer + '/OptixRenderer-master/build/bin/optixRenderer'
+renderer = '/home/vig-titan2/Downloads/OptixRenderer-master/build/bin/optixRenderer'
 max_it = 10
 z_min = 0.6
-
+mask_threshold = 25.0
 
 def make_camtxt(camera, var=None, baseline=0.3):
     # [right, down, forward] order
@@ -208,12 +207,13 @@ def find_ff_pose(camera, xml, out_dir, k, baseline, hwf, q):
             d_min_list = []
             for depth_name, mask_name in zip(depths, masks):
                 mask = 0.5 * (loadImage(mask_name) + 1)[0:1, ...]
-                segObj = (mask > 0.9)
-                bool_tmp = not np.percentile(mask, 15.0) < 1
+                segall = (mask > 0.45)
+                bool_tmp = not np.percentile(mask, mask_threshold) < 1
                 w_flag_list.append(bool_tmp)
                 if bool_tmp:
                     depth = loadBinary(depth_name)
-                    min = np.percentile(depth * segObj, 5.0)
+                    depth[~segall] = np.nan
+                    min = np.nanpercentile(depth, 3.0)
                     d_flag_list.append(min > z_min)
                     d_min_list.append(min)
                 else:
@@ -221,6 +221,7 @@ def find_ff_pose(camera, xml, out_dir, k, baseline, hwf, q):
                     d_min_list.append(10.0)
 
             # print(d_flag_list)
+            # print(k, d_min_list + w_flag_list)
             if all(d_flag_list) and all(w_flag_list):
                 # convert current pose to FF and save
                 poses, camtxt = make_full_FFcam(camera, var, baseline=baseline)

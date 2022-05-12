@@ -5,8 +5,8 @@ from find_FFpose_func import *
 from xml.etree.ElementTree import ElementTree, parse
 # https://tempdev.tistory.com/entry/Python-multiprocessingPool-%EB%A9%80%ED%8B%B0%ED%94%84%EB%A1%9C%EC%84%B8%EC%8B%B1-2
 
-processed_dir = '/home/vig-titan-103/Data/OpenRooms_findpose/data/rendering/tmp'
-scenes_root = '/home/vig-titan-103/Data/OpenRooms_findpose/data/rendering/scenes'
+processed_dir = '/home/vig-titan2/Data/OpenRooms_findpose/data/rendering/tmp'
+scenes_root = '/home/vig-titan2/Data/OpenRooms_findpose/data/rendering/scenes'
 num_gpu = 2
 depth_to_baseline = 0.06
 min_baseline = 0.08
@@ -94,7 +94,7 @@ def main():
 
         os.makedirs(out_dir, exist_ok=True)
         cameraFile = xml.split('main')[0] + 'cam.txt'
-        org_dir = '/media/vig-titan-103/mybookduo/OpenRooms_org' + out_dir.split('data_FF_10_640')[1]
+        org_dir = '/home/vig-titan2/Data/OpenRooms_org' + out_dir.split('data_FF_10_640')[1]
         if not osp.exists(org_dir):
             print(org_dir, 'is not exists, pass')
             continue
@@ -123,6 +123,15 @@ def main():
             imname = org_dir + f'im_{k + 1}.hdr'
             maskname = (org_dir + f'immask_{k + 1}.png').replace('DiffMat', '')
             depthname = (org_dir + f'imdepth_{k + 1}.dat').replace('DiffMat', '').replace('DiffLight', '')
+            if not osp.isfile(imname):
+                print(f'{imname} is not exists.')
+                k_list.append(k)
+                if set(k_list) == set(range(num_cam)):
+                    print('all image is pushed.')
+                    break
+                k = next_k(k, k_list, num_cam, 'right')
+                continue
+
             im = loadHdr(imname)
             seg = 0.5 * (loadImage(maskname) + 1)[0:1, :, :]
             scale = get_hdr_scale(im, seg, 'TEST')
@@ -138,7 +147,7 @@ def main():
             print(f'{name} // all: {num_cam}, current idx: {k}, baseline: {baseline:.3f}')
 
             cv2.namedWindow(str(num_cam))  # Create a named window
-            cv2.moveWindow(str(num_cam), 100, 200)  # Move it to (40,30)
+            cv2.moveWindow(str(num_cam), 1300, 500)  # Move it to (40,30)
 
             im_previous = image_concater(im_list)
             if im_previous is not None:
