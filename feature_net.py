@@ -478,7 +478,7 @@ class DirectLightingNet(nn.Module):
     def __init__(self, cfg):
         self.SGNum = cfg.SGNum
         super(DirectLightingNet, self).__init__()
-        self.layer_d_1 = make_layer(pad_type='rep', in_ch=7, out_ch=32, kernel=4, stride=2, num_group=2, norm_layer=cfg.norm_layer)
+        self.layer_d_1 = make_layer(pad_type='rep', in_ch=8, out_ch=32, kernel=4, stride=2, num_group=2, norm_layer=cfg.norm_layer)
         self.layer_d_2 = make_layer(in_ch=32, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
         self.layer_d_3 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
         self.layer_d_4 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
@@ -516,11 +516,11 @@ class DirectLightingNet(nn.Module):
         dx6 = self.layer_u_6(dx5)
 
         x_out = 1.01 * torch.tanh(self.layer_final(dx6))
-        intensity_sharp = x_out[:, :self.SGNum * 4, ...]
+        intensity_sharp = x_out[:, :self.SGNum * 4]
         intensity_sharp = 0.5 * (intensity_sharp + 1)
         intensity_sharp = torch.clamp(intensity_sharp, 0, 1)
-        intensity = intensity_sharp[:, :self.SGNum * 3, ...]
-        sharp = intensity_sharp[:, self.SGNum * 3:, ...]
+        intensity = intensity_sharp[:, :self.SGNum * 3]
+        sharp = intensity_sharp[:, self.SGNum * 3:]
 
         axis = x_out[:, self.SGNum * 4:]
         bn, _, row, col = axis.size()

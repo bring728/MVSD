@@ -30,6 +30,7 @@ def img2mse(x, y, mask=None):
     else:
         return torch.sum((x - y) * (x - y) * mask) / (torch.sum(mask) + TINY_NUMBER)
 
+
 # img is B C H W
 def img2angerr(x, y, mask=None):
     tmp = torch.clamp(torch.sum(x * y, dim=1, keepdim=True), min=-1 + eps, max=1 - eps)
@@ -44,11 +45,17 @@ def img2log_mse(x, y, mask=None):
     if mask is None:
         return torch.mean(torch.log(x + 1.0) - torch.log(y + 1.0)) * (torch.log(x + 1.0) - torch.log(y + 1.0))
     else:
-        return torch.sum((torch.log(x + 1.0) - torch.log(y + 1.0)) * (torch.log(x + 1.0) - torch.log(y + 1.0)) * mask) / (torch.sum(mask) + TINY_NUMBER)
+        return torch.sum((torch.log(x + 1.0) - torch.log(y + 1.0)) * (torch.log(x + 1.0) - torch.log(y + 1.0)) * mask) / (
+                    torch.sum(mask) + TINY_NUMBER)
 
 
 def img2psnr(x, y, mask=None):
     return mse2psnr(img2mse(x, y, mask).item())
+
+
+def env_vis(env, h, w, r, c):
+    env = torch.permute(env / torch.max(env), (0, 1, 3, 2, 4)).reshape(3, r * h, c * w)
+    return env
 
 
 def th_save_img(img_name, img):
@@ -91,13 +98,6 @@ def cvimg_from_torch(tensor, iscolor=True):
     tensor = img_CHW2HWC(tensor)
     image = np.clip((tensor.detach().cpu().numpy() * 255.0), 0, 255).astype(np.uint8)
     return image
-
-def saveimg_from_torch(filename, tensor, iscolor=True):
-    if iscolor:
-        tensor = img_rgb2bgr(tensor)
-    tensor = img_CHW2HWC(tensor)
-    image = np.clip((tensor.numpy() * 255.0).astype(np.uint8), 0, 255)
-    cv2.imwrite(filename, image)
 
 
 def srgb2rgb(srgb):
@@ -175,29 +175,21 @@ def loadBinary(imName, resize=False, W=None, H=None):
     return depth[np.newaxis, :, :]
 
 
-
-def loadEnvmap(envName, env_height=8, env_width=16, env_rows=120, env_cols=160):
+def loadEnvmap(envName, env_height, env_width, env_rows, env_cols):
     envHeightOrig, envWidthOrig = 16, 32
 
     env = cv2.imread(envName, -1)
-    # env = (np.clip(img_rgb2bgr(env.transpose(2,0,1)).transpose(1,2,0), 0, 1) * 255.0).astype(np.uint8)
-    # cv2.imwrite('a.png', env)
     if not env is None:
         env = env.reshape(env_rows, envHeightOrig, env_cols, envWidthOrig, 3)
         env = np.ascontiguousarray(env.transpose([4, 0, 2, 1, 3]))
-
         scale = envHeightOrig / env_height
         if scale > 1:
             env = block_reduce(env, block_size=(1, 1, 1, 2, 2), func=np.mean)
-            env.transpose([1, 3, 2, 4, 0])
-            envInd = np.ones([1, 1, 1], dtype=np.float32)
-            return env, envInd
+        envInd = np.ones([1, 1, 1], dtype=np.float32)
+        return env, envInd
 
-        else:
-            env = np.zeros([3, env_rows, env_cols, env_height, env_width], dtype=np.float32)
-            envInd = np.zeros([1, 1, 1], dtype=np.float32)
-            print('Warning: the envmap %s does not exist.' % envName)
-            return env, envInd
+    else:
+        raise Exception('env does not exist')
 
 
 def predToShading(pred, envWidth=32, envHeight=16, SGNum=12):
@@ -261,15 +253,18 @@ def cycle(iterable):
         for x in iterable:
             yield x
 
+
 def outdir2xml(scene):
     a = scene.split('data_FF_10_640')
     b = a[1].split('/')
     scene_name = b[2]
     return a[0] + 'scenes/' + b[1].split('_')[1] + '/' + scene_name + '/' + b[1].split('_')[0] + '_FF.xml'
 
+
 def xml2camtxt(xml, k):
     scene_type = xml.split('/')[-1].split('_')[0]
     return f'{osp.dirname(xml)}/{k}_cam_{scene_type}_FF.txt'
+
 
 def xml2outdir(xml):
     split = xml.split('.')[0].split('/')
@@ -283,6 +278,7 @@ def xml2outdir(xml):
     scene_name = split[-2]
     xml_name = split[-3]
     return osp.join(root, scene_type + '_' + xml_name, scene_name)
+
 
 def camtxt2outdir(camtxt):
     split = camtxt.split('.')[0].split('/')

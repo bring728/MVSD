@@ -82,7 +82,8 @@ class Openrooms_org(Dataset):
         depth = loadBinary(str(self.depthList[ind], encoding='utf-8'))
         depth = depth / depth.max()
 
-        envmaps, envmapsInd = loadEnvmap(str(self.directlightList[ind], encoding='utf-8'), self.env_height, self.env_width, self.env_rows, self.env_cols)
+        envmaps, envmapsInd = loadEnvmap(str(self.directlightList[ind], encoding='utf-8'), self.env_height, self.env_width, self.env_rows,
+                                         self.env_cols)
         envmaps = envmaps * scale
 
         rgbd = np.concatenate([im, depth], axis=0).astype(np.float32)
@@ -230,11 +231,10 @@ class Openrooms_FF(Dataset):
 
 class Openrooms_FF_single(Dataset):
     def __init__(self, dataRoot, cfg, phase='TRAIN', debug=True):
-        self.num_view_all = cfg.num_view_all
+        self.dataRoot = dataRoot
+        self.cfg = cfg
         self.phase = phase
-        self.cdsmvs_to_gt = 2.0
         self.prob_threshold = 0.8
-        self.depth_type = cfg.depth_type
 
         if phase == 'TRAIN' and debug:
             sceneFile = osp.join(dataRoot, 'train_debug.txt')
@@ -249,112 +249,76 @@ class Openrooms_FF_single(Dataset):
 
         with open(sceneFile, 'r') as fIn:
             sceneList = fIn.readlines()
-        sceneList = [osp.join(dataRoot, a.strip()) for a in sceneList]
+        sceneList = [a.strip() for a in sceneList]
 
-        self.viewList = []
-        self.albedoList = []
-        self.normalList = []
-        self.roughList = []
-        self.depthmvsList = []
-        self.midasList = []
-        self.confList = []
-        self.depthGTList = []
-        self.segList = []
-
-        # bds = np.load(osp.join(sceneList[0], 'poses_bounds.npy'))[:, -2:].transpose([1, 0])
-        # self.near_depth = bds.min() * 0.9
-        # self.far_depth = bds.max() * 2
-        # self.plane_depths = np.array(InterpolateDepths(self.near_depth, self.far_depth, self.num_planes))
-
-        idx_list = list(range(self.num_view_all))
+        self.nameList = []
+        idx_list = list(range(self.cfg.num_view_all))
         for scene in sceneList:
-            poses = np.load(scene + 'poses_bounds.npy')
-            # poses = poses_arr[:, :-2].reshape([-1, 3, 5])
-            self.viewList += [f'{scene}im_{i + 1}.rgbe' for i in idx_list]
-            self.depthmvsList += [f'{scene}depthest_{i + 1}.dat' for i in idx_list]
-            self.midasList += [f'{scene}midas_{i + 1}.dat' for i in idx_list]
-            self.confList += [f'{scene}conf_{i + 1}.dat' for i in idx_list]
-            self.albedoList += [f'{scene}imbaseColor_{i + 1}.png' for i in idx_list]
-            self.normalList += [f'{scene}imnormal_{i + 1}.png' for i in idx_list]
-            self.roughList += [f'{scene}imroughness_{i + 1}.png' for i in idx_list]
-            self.depthGTList += [f'{scene}imdepth_{i + 1}.dat' for i in idx_list]
-            self.segList += [f'{scene}immask_{i + 1}.png' for i in idx_list]
+            self.nameList += [scene + '{}_' + f'{i + 1}' + '.{}' for i in idx_list]
 
-        self.count = len(self.viewList)
+        self.count = len(self.nameList)
         print('sample Num: %d' % self.count)
-
-        self.viewList = np.array(self.viewList).astype(np.string_)
-        self.albedoList = np.array(self.albedoList).astype(np.string_)
-        self.normalList = np.array(self.normalList).astype(np.string_)
-        self.roughList = np.array(self.roughList).astype(np.string_)
-        self.depthmvsList = np.array(self.depthmvsList).astype(np.string_)
-        self.midasList = np.array(self.midasList).astype(np.string_)
-        self.confList = np.array(self.confList).astype(np.string_)
-        self.depthGTList = np.array(self.depthGTList).astype(np.string_)
-        self.segList = np.array(self.segList).astype(np.string_)
 
     def __len__(self):
         return self.count
 
     def __getitem__(self, ind):
-        name = str(self.viewList[ind], encoding='utf-8')
-        im = loadHdr(str(self.viewList[ind], encoding='utf-8'))
-        seg = 0.5 * (loadImage(str(self.segList[ind], encoding='utf-8')) + 1)[0:1, :, :]
+        name = osp.join(self.dataRoot, self.nameList[ind])
+        im = loadHdr(name.format('im', 'rgbe'))
+        seg = 0.5 * (loadImage(name.format('immask', 'png')) + 1)[0:1, :, :]
         scale = get_hdr_scale(im, seg, self.phase)
         im = np.clip(im * scale, 0, 1.0)
 
-        # segArea = np.logical_and(seg > 0.49, seg < 0.51)
-        # segEnv = (seg < 0.1)
-        # segObj = (seg > 0.9)
-        # seg = np.concatenate([segObj, segArea + segObj], axis=0).astype(np.float32)
-        segArea = np.logical_and(seg > 0.49, seg < 0.51).astype(np.float32)
-        # segEnv = (seg < 0.1).astype(np.float32)
-        segObj = (seg > 0.9)
-        # segObj = ndimage.binary_erosion(segObj.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
-        # segObj = segObj.astype(np.float32)
-        seg = np.concatenate([segObj, segArea + segObj], axis=0) # segBRDF, segAll
+        if self.cfg.is_Light:
+            segArea = np.logical_and(seg > 0.49, seg < 0.51).astype(np.float32)
+            segObj = (seg > 0.9)
+            segObj = ndimage.binary_erosion(segObj.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
+            segObj = segObj.astype(np.float32)
+            seg = np.concatenate([segObj, segArea + segObj], axis=0)  # segBRDF, segAll
+        else:
+            segArea = np.logical_and(seg > 0.49, seg < 0.51).astype(np.float32)
+            segObj = (seg > 0.9)
+            seg = np.concatenate([segObj, segArea + segObj], axis=0)  # segBRDF, segAll
 
-        albedo = loadImage(str(self.albedoList[ind], encoding='utf-8'), isGama=False)
+        albedo = loadImage(name.format('imbaseColor', 'png'), isGama=False)
         albedo = ((0.5 * (albedo + 1)) ** 2.2).astype(np.float32)
-        normal = loadImage(str(self.normalList[ind], encoding='utf-8'))
+        normal = loadImage(name.format('imnormal', 'png'))
         normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0), 1e-5))[np.newaxis, :]).astype(np.float32)
-        rough = loadImage(str(self.roughList[ind], encoding='utf-8'))[0:1, :, :].astype(np.float32)
+        rough = loadImage(name.format('imroughness', 'png'))[0:1, :, :].astype(np.float32)
 
-        if self.depth_type == 'mvs':
-            conf = loadBinary(str(self.confList[ind], encoding='utf-8'))
+        envmaps, envmapsInd = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.env_height, self.cfg.env_width, self.cfg.env_rows, self.cfg.env_cols)
+        envmaps = envmaps * scale
 
-            depthmvs = loadBinary(str(self.depthmvsList[ind], encoding='utf-8'))
+        if self.cfg.depth_type == 'mvs':
+            depthmvs = loadBinary(name.format('depthest', 'dat'))
+            conf = loadBinary(name.format('conf', 'dat'))
             depth_filtered = depthmvs.copy()
             mask = (conf > self.prob_threshold)
             depth_filtered[~mask] = 0
             depth_max = np.percentile(depth_filtered, 96)
-            depthmvs_normalized = depthmvs / depth_max
-            depthmvs_normalized = np.clip(depthmvs_normalized, 0, 1)
+            depthmvs_normalized = np.clip(depthmvs / depth_max, 0, 1)
             input_data = np.concatenate([im, depthmvs_normalized, conf], axis=0).astype(np.float32)
 
-            depthGT = loadBinary(str(self.depthGTList[ind], encoding='utf-8'))
-            depthGT_normalized = (depthGT / depth_max).astype(np.float32)
+            depthGT = loadBinary(name.format('imdepth', 'dat'))
+            depthGT_normalized = np.clip((depthGT / depth_max), 0, 1).astype(np.float32)
             # depth_err = np.mean(np.abs(depthGT_normalized - depthmvs_normalized))
             # cv2.hconcat([depthGT_normalized.transpose([1,2,0]), depthmvs_normalized.transpose([1,2,0])])
-            # depthmvs_normalized = np.zeros([480, 640])
-            # conf = np.zeros([480, 640])
-
-            # a = loadBinary(str(self.depthGTList[ind], encoding='utf-8'))
-            # b = loadBinary(str(self.depthGTList[ind], encoding='utf-8'))
-            # input_data = np.concatenate([im, a, b], axis=0).astype(np.float32)
-
-        elif self.depth_type == 'midas':
-            depthmidas = loadBinary(str(self.midasList[ind], encoding='utf-8'))
+        elif self.cfg.depth_type == 'midas':
+            depthmidas = loadBinary(name.format('midas', 'dat'))
             depthmidas_normalized = depthmidas / np.percentile(depthmidas, 96)
             depthmidas_normalized = np.clip(depthmidas_normalized, 0, 1)
             input_data = np.concatenate([im, depthmidas_normalized], axis=0).astype(np.float32)
         else:
             raise Exception('depth type error')
+
+
         batchDict = {'input': input_data,
-                     'normal': normal,
-                     # 'depthGT': depthGT_normalized,
+                     'normal_gt': normal,
+                     'depth_gt': depthGT_normalized,
                      'seg': seg,
                      'name': name,
+                     'envmaps_gt': envmaps.astype(np.float32),
+                     'envmapsInd': envmapsInd,
                      # 'depth_err': depth_err,
                      }
         return batchDict

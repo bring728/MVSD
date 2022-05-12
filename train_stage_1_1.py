@@ -26,6 +26,7 @@ if not torch.cuda.is_available():
 
 
 def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False):
+    model_type = 'normal'
     if is_DDP:
         torch.distributed.init_process_group(backend='nccl', init_method='tcp://127.0.0.1:2958', world_size=num_gpu, rank=gpu)
         torch.cuda.set_device(gpu)
@@ -71,7 +72,7 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False):
                                   pin_memory=pinned)
 
     val_dataset = Openrooms_FF_single(dataRoot, cfg, 'TEST', debug)
-    val_loader = DataLoader(val_dataset, batch_size=int(cfg.batchsize / num_gpu), shuffle=False)
+    val_loader = DataLoader(val_dataset, batch_size=batch_per_gpu, shuffle=False)
 
     scalars_to_log = {}
     global_step = len(train_loader) * curr_model.start_epoch + 1
@@ -91,7 +92,7 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False):
                 train_data = tocuda(train_data, gpu)
                 segAll = train_data['seg'][:, 1:, ...]
                 normal_pred = curr_model.normal_net(train_data['input'])
-                normal_gt = train_data['normal']
+                normal_gt = train_data['normal_gt']
 
                 normal_mse_err = img2mse(normal_pred, normal_gt, segAll)
                 normal_ang_err = img2angerr(normal_pred, normal_gt, segAll)
@@ -115,23 +116,22 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False):
                 if global_step % cfg.i_print == 0:
                     print_state(exp_name, start_time, max_iterations, global_step, epoch, gpu)
                 if global_step % cfg.i_img == 0:
-                # if global_step % 1 == 0:
                     depth_input = train_data['input'][0, 3, ...]
                     depth_input = depth_input.expand(normal_gt[0].size())
                     imgs = [(0.5 * (normal_gt[0] + 1)), (0.5 * (normal_pred[0] + 1)), depth_input]
-                    record_images(writer, global_step, imgs, 'normal')
+                    record_images(writer, global_step, imgs, model_type)
 
         epoch += 1
         if record_flag:
             fpath = f'{ckpt_prefix}_{epoch:06d}.pth'
             curr_model.save_model(fpath)
-            eval_model(writer, curr_model, None, val_loader, gpu, epoch, cfg, 'normal', False)
+            eval_model(writer, curr_model, None, val_loader, gpu, epoch, cfg, model_type)
             torch.cuda.empty_cache()
 
     if record_flag:
         fpath = f'{ckpt_prefix}_latest.pth'
         curr_model.save_model(fpath)
-        eval_model(writer, curr_model, None, val_loader, gpu, epoch, cfg, 'normal', True)
+        quality_eval_model(writer, curr_model, None, val_loader, gpu, cfg, model_type)
 
     if is_DDP:
         torch.distributed.destroy_process_group()
