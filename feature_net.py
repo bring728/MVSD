@@ -466,11 +466,10 @@ class NormalNet(nn.Module):
         dx4 = self.layer_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx5 = self.layer_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx6 = self.layer_u_6(F.interpolate(torch.cat([dx5, x1], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        x_orig = self.layer_final(dx6)
+        x_out = self.layer_final(dx6)
 
-        x_orig = torch.clamp(1.01 * torch.tanh(x_orig), -1, 1)
-        norm = torch.sqrt(torch.sum(x_orig * x_orig, dim=1).unsqueeze(1)).expand_as(x_orig)
-        normal = x_orig / torch.clamp(norm, min=1e-6)
+        x_out = torch.clamp(1.01 * torch.tanh(x_out), -1, 1)
+        normal = x_out / torch.clamp(torch.sqrt(torch.sum(x_out * x_out, dim=1, keepdim=True)), min=1e-6)
         return normal
 
 
@@ -525,7 +524,7 @@ class DirectLightingNet(nn.Module):
         axis = x_out[:, self.SGNum * 4:]
         bn, _, row, col = axis.size()
         axis = axis.view(bn, self.SGNum, 3, row, col)
-        axis = axis / torch.clamp(torch.sqrt(torch.sum(axis * axis, dim=2).unsqueeze(2)), min=1e-6).expand_as(axis)
+        axis = axis / torch.clamp(torch.sqrt(torch.sum(axis * axis, dim=2, keepdim=True)), min=1e-6)
         return axis, sharp, intensity
 
 

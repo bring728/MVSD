@@ -286,6 +286,12 @@ class SVDirectLightModel(object):
         root = osp.dirname(osp.dirname(experiment))
         self.normalnet_path = osp.join(root, 'stage1-1', cfg.normalnet_path)
         self.normal_net = NormalNet(cfg).to(device)
+        if self.is_DDP:
+            normal_ckpt = torch.load(osp.join(self.normalnet_path, 'model_normal_latest.pth'), map_location={'cuda:0': 'cuda:%d' % self.gpu})
+        else:
+            normal_ckpt = torch.load(osp.join(self.normalnet_path, 'model_normal_latest.pth'))
+        self.normal_net.load_state_dict(normal_ckpt['normal_net'])
+
         self.DL_net = DirectLightingNet(cfg).to(device)
         light_optim_param = {'params': self.DL_net.parameters(), 'lr': float(cfg.lr)}
 
@@ -327,17 +333,14 @@ class SVDirectLightModel(object):
     def load_model(self, filename, load_opt=True, load_scheduler=True):
         if self.phase == 'TRAIN' and self.is_DDP:
             to_load = torch.load(filename, map_location={'cuda:0': 'cuda:%d' % self.gpu})
-            normal_ckpt = torch.load(osp.join(self.normalnet_path, 'model_normal_latest.pth'), map_location={'cuda:0': 'cuda:%d' % self.gpu})
         else:
             to_load = torch.load(filename)
-            normal_ckpt = torch.load(osp.join(self.normalnet_path, 'model_normal_latest.pth'))
 
         if load_opt:
             self.optimizer.load_state_dict(to_load['optimizer'])
         if load_scheduler:
             self.scheduler.load_state_dict(to_load['scheduler'])
         self.DL_net.load_state_dict(to_load['DL_net'])
-        self.normal_net.load_state_dict(normal_ckpt['normal_net'])
 
     def load_from_ckpt(self, out_folder, load_opt=False, load_scheduler=False):
         '''

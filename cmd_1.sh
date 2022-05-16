@@ -5,7 +5,10 @@
 #wait
 
 
-python3 ~/PycharmProjects/MVSD/train_DDP_wrapper.py 2 'stage1-1_0.yml'
+python3 ~/PycharmProjects/MVSD/train_DDP_wrapper.py 2 'stage1-1_2.yml'
+wait
+
+python3 ~/PycharmProjects/MVSD/train_DDP_wrapper.py 2 'stage1-2_0.yml'
 wait
 
 #output_txt="10_rendered.txt"

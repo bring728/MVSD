@@ -269,16 +269,13 @@ class Openrooms_FF_single(Dataset):
         scale = get_hdr_scale(im, seg, self.phase)
         im = np.clip(im * scale, 0, 1.0)
 
+        segArea = np.logical_and(seg > 0.49, seg < 0.51)
+        segObj = (seg > 0.9)
         if self.cfg.is_Light:
-            segArea = np.logical_and(seg > 0.49, seg < 0.51).astype(np.float32)
-            segObj = (seg > 0.9)
             segObj = ndimage.binary_erosion(segObj.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
-            segObj = segObj.astype(np.float32)
-            seg = np.concatenate([segObj, segArea + segObj], axis=0)  # segBRDF, segAll
+            seg = np.concatenate([segObj, segArea + segObj], axis=0).astype(np.float32)  # segBRDF, segAll
         else:
-            segArea = np.logical_and(seg > 0.49, seg < 0.51).astype(np.float32)
-            segObj = (seg > 0.9)
-            seg = np.concatenate([segObj, segArea + segObj], axis=0)  # segBRDF, segAll
+            seg = np.concatenate([segObj, segArea + segObj], axis=0).astype(np.float32)  # segBRDF, segAll
 
         albedo = loadImage(name.format('imbaseColor', 'png'), isGama=False)
         albedo = ((0.5 * (albedo + 1)) ** 2.2).astype(np.float32)
@@ -286,21 +283,24 @@ class Openrooms_FF_single(Dataset):
         normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0), 1e-5))[np.newaxis, :]).astype(np.float32)
         rough = loadImage(name.format('imroughness', 'png'))[0:1, :, :].astype(np.float32)
 
-        envmaps, envmapsInd = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.env_height, self.cfg.env_width, self.cfg.env_rows, self.cfg.env_cols)
-        envmaps = envmaps * scale
+        if self.cfg.is_Light:
+            envmaps, envmapsInd = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.env_height, self.cfg.env_width, self.cfg.env_rows, self.cfg.env_cols)
+            envmaps = envmaps * scale
 
         if self.cfg.depth_type == 'mvs':
-            depthmvs = loadBinary(name.format('depthest', 'dat'))
+            # depthmvs = loadBinary(name.format('depthest', 'dat'))
+            depthmvs_normalized = loadBinary(name.format('depthestnorm', 'dat'))
             conf = loadBinary(name.format('conf', 'dat'))
-            depth_filtered = depthmvs.copy()
-            mask = (conf > self.prob_threshold)
-            depth_filtered[~mask] = 0
-            depth_max = np.percentile(depth_filtered, 96)
-            depthmvs_normalized = np.clip(depthmvs / depth_max, 0, 1)
+            # depth_filtered = depthmvs.copy()
+            # mask = (conf > self.prob_threshold)
+            # depth_filtered[~mask] = 0
+            # depth_max = np.percentile(depth_filtered, 96)
+            # if depth_max < 0.1:
+            #     raise Exception(name)
+            # depthmvs_normalized = np.clip(depthmvs / depth_max, 0, 1)
             input_data = np.concatenate([im, depthmvs_normalized, conf], axis=0).astype(np.float32)
-
             depthGT = loadBinary(name.format('imdepth', 'dat'))
-            depthGT_normalized = np.clip((depthGT / depth_max), 0, 1).astype(np.float32)
+            depthGT_normalized = np.clip((depthGT / depthGT.max()), 0, 1).astype(np.float32)
             # depth_err = np.mean(np.abs(depthGT_normalized - depthmvs_normalized))
             # cv2.hconcat([depthGT_normalized.transpose([1,2,0]), depthmvs_normalized.transpose([1,2,0])])
         elif self.cfg.depth_type == 'midas':
@@ -311,14 +311,79 @@ class Openrooms_FF_single(Dataset):
         else:
             raise Exception('depth type error')
 
-
         batchDict = {'input': input_data,
                      'normal_gt': normal,
                      'depth_gt': depthGT_normalized,
                      'seg': seg,
                      'name': name,
-                     'envmaps_gt': envmaps.astype(np.float32),
-                     'envmapsInd': envmapsInd,
                      # 'depth_err': depth_err,
                      }
+
+        if self.cfg.is_Light:
+            batchDict['envmaps_gt'] = envmaps.astype(np.float32)
+            batchDict['envmapsInd'] = envmapsInd
         return batchDict
+
+
+    # def __getitem__(self, ind):
+    #     name = osp.join(self.dataRoot, self.nameList[ind])
+    #     im = loadHdr(name.format('im', 'rgbe'))
+    #     seg = 0.5 * (loadImage(name.format('immask', 'png')) + 1)[0:1, :, :]
+    #     scale = get_hdr_scale(im, seg, self.phase)
+    #     im = np.clip(im * scale, 0, 1.0)
+    #
+    #     if self.cfg.is_Light:
+    #         segArea = np.logical_and(seg > 0.49, seg < 0.51).astype(np.float32)
+    #         segObj = (seg > 0.9)
+    #         segObj = ndimage.binary_erosion(segObj.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
+    #         segObj = segObj.astype(np.float32)
+    #         seg = np.concatenate([segObj, segArea + segObj], axis=0)  # segBRDF, segAll
+    #     else:
+    #         segArea = np.logical_and(seg > 0.49, seg < 0.51).astype(np.float32)
+    #         segObj = (seg > 0.9)
+    #         seg = np.concatenate([segObj, segArea + segObj], axis=0)  # segBRDF, segAll
+    #
+    #     albedo = loadImage(name.format('imbaseColor', 'png'), isGama=False)
+    #     albedo = ((0.5 * (albedo + 1)) ** 2.2).astype(np.float32)
+    #     normal = loadImage(name.format('imnormal', 'png'))
+    #     normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0), 1e-5))[np.newaxis, :]).astype(np.float32)
+    #     rough = loadImage(name.format('imroughness', 'png'))[0:1, :, :].astype(np.float32)
+    #
+    #     envmaps, envmapsInd = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.env_height, self.cfg.env_width, self.cfg.env_rows, self.cfg.env_cols)
+    #     envmaps = envmaps * scale
+    #
+    #     if self.cfg.depth_type == 'mvs':
+    #         depthmvs = loadBinary(name.format('depthest', 'dat'))
+    #         conf = loadBinary(name.format('conf', 'dat'))
+    #         depth_filtered = depthmvs.copy()
+    #         mask = (conf > self.prob_threshold)
+    #         depth_filtered[~mask] = 0
+    #         depth_max = np.percentile(depth_filtered, 96)
+    #         if depth_max < 0.1:
+    #             raise Exception(name)
+    #         depthmvs_normalized = np.clip(depthmvs / depth_max, 0, 1)
+    #         input_data = np.concatenate([im, depthmvs_normalized, conf], axis=0).astype(np.float32)
+    #
+    #         depthGT = loadBinary(name.format('imdepth', 'dat'))
+    #         depthGT_normalized = np.clip((depthGT / depth_max), 0, 1).astype(np.float32)
+    #         # depth_err = np.mean(np.abs(depthGT_normalized - depthmvs_normalized))
+    #         # cv2.hconcat([depthGT_normalized.transpose([1,2,0]), depthmvs_normalized.transpose([1,2,0])])
+    #     elif self.cfg.depth_type == 'midas':
+    #         depthmidas = loadBinary(name.format('midas', 'dat'))
+    #         depthmidas_normalized = depthmidas / np.percentile(depthmidas, 96)
+    #         depthmidas_normalized = np.clip(depthmidas_normalized, 0, 1)
+    #         input_data = np.concatenate([im, depthmidas_normalized], axis=0).astype(np.float32)
+    #     else:
+    #         raise Exception('depth type error')
+    #
+    #
+    #     batchDict = {'input': input_data,
+    #                  'normal_gt': normal,
+    #                  'depth_gt': depthGT_normalized,
+    #                  'seg': seg,
+    #                  'name': name,
+    #                  'envmaps_gt': envmaps.astype(np.float32),
+    #                  'envmapsInd': envmapsInd,
+    #                  # 'depth_err': depth_err,
+    #                  }
+    #     return batchDict

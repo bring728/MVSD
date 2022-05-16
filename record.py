@@ -2,7 +2,7 @@ from utils import *
 from tqdm import tqdm
 import time
 import datetime
-from termcolor import colored
+# from termcolor import colored
 import sys
 import torch.nn.functional as F
 
@@ -16,7 +16,8 @@ def print_state(name, start_time, max_it, global_step, epoch, gpu):
     remain_time = str(datetime.timedelta(seconds=remain_sec)).split('.')[0]
     prog = global_step / max_it * 100
 
-    print(colored(f'{name} epoch : {epoch} step: {global_step} / {max_it}, {prog:.1f}% elapsed:{elapsed_time}, remain:{remain_time}', colors[gpu]))
+    print(f'{name} epoch : {epoch} step: {global_step} / {max_it}, {prog:.1f}% elapsed:{elapsed_time}, remain:{remain_time}')
+    # print(colored(f'{name} epoch : {epoch} step: {global_step} / {max_it}, {prog:.1f}% elapsed:{elapsed_time}, remain:{remain_time}', colors[gpu]))
 
 
 def record_images(writer, global_step, imgs, prefix):

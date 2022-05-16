@@ -1,17 +1,17 @@
 nepoch: 30
 
-batchsize: 32
+batchsize: 16
 num_workers: 6
 
-lr: 5e-4
-lrate_decay_steps: 5000
+lr: 2e-4
+lrate_decay_steps: 10000
 lrate_decay_factor: 0.5
 
 norm_layer: group
 depth_type: mvs
 normalnet_path: stage1-1_1
-is_Light: True
 
+is_Light: True
 SGNum: 6
 env_height: 8
 env_width: 16
@@ -21,7 +21,7 @@ env_cols: 40
 num_view_all: 9
 autocast: True
 randomseed: 2245
-i_img: 500
+i_img: 30
 i_print: 10
 
 

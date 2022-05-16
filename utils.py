@@ -1,7 +1,6 @@
 import numpy as np
 import sys, re, struct
 from PIL import Image
-import cv2
 import os.path as osp
 import imageio
 from skimage.measure import block_reduce
@@ -26,9 +25,9 @@ psnr2mse = lambda x: 10 ** -(x / (10.0))
 # img is B C H W
 def img2mse(x, y, mask=None):
     if mask is None:
-        return torch.mean((x - y) * (x - y))
+        return torch.mean((x - y) ** 2)
     else:
-        return torch.sum((x - y) * (x - y) * mask) / (torch.sum(mask) + TINY_NUMBER)
+        return torch.sum((x - y) ** 2 * mask) / (torch.sum(mask) + TINY_NUMBER)
 
 
 # img is B C H W
@@ -43,10 +42,9 @@ def img2angerr(x, y, mask=None):
 # img is B C H W
 def img2log_mse(x, y, mask=None):
     if mask is None:
-        return torch.mean(torch.log(x + 1.0) - torch.log(y + 1.0)) * (torch.log(x + 1.0) - torch.log(y + 1.0))
+        return torch.mean(torch.log(x + 1.0) - torch.log(y + 1.0) ** 2)
     else:
-        return torch.sum((torch.log(x + 1.0) - torch.log(y + 1.0)) * (torch.log(x + 1.0) - torch.log(y + 1.0)) * mask) / (
-                    torch.sum(mask) + TINY_NUMBER)
+        return torch.sum((torch.log(x + 1.0) - torch.log(y + 1.0)) ** 2 * mask) / (torch.sum(mask) + TINY_NUMBER)
 
 
 def img2psnr(x, y, mask=None):
@@ -134,12 +132,13 @@ def loadHdr(imName):
     if not (osp.isfile(imName)):
         print(imName)
         raise Exception(imName, 'image doesnt exists')
-    im = cv2.imread(imName, -1)
+    # im = cv2.imread(imName, -1)
+    im = np.array(imageio.imread_v2(imName, format='HDR-FI'))
     if im is None:
         print(imName)
         raise Exception(imName, 'image doesnt exists 2')
     im = np.transpose(im, [2, 0, 1])
-    im = im[::-1, :, :]
+    # im = im[::-1, :, :]
     return im
 
 
@@ -158,7 +157,7 @@ def get_hdr_scale(hdr, seg, phase):
     return scale
 
 
-def loadBinary(imName, resize=False, W=None, H=None):
+def loadBinary(imName):
     if not (osp.isfile(imName)):
         print(imName)
         assert (False)
@@ -170,15 +169,16 @@ def loadBinary(imName, resize=False, W=None, H=None):
         dBuffer = fIn.read(4 * width * height)
         depth = np.asarray(struct.unpack('f' * height * width, dBuffer))
         depth = depth.reshape([height, width])
-        if resize:
-            depth = cv2.resize(depth, (W, H), interpolation=cv2.INTER_AREA)
     return depth[np.newaxis, :, :]
 
 
 def loadEnvmap(envName, env_height, env_width, env_rows, env_cols):
     envHeightOrig, envWidthOrig = 16, 32
+    assert ((envHeightOrig / env_height) == (envWidthOrig / env_width))
+    assert (envHeightOrig % env_height == 0)
 
-    env = cv2.imread(envName, -1)
+    # env = cv2.imread(envName, -1)
+    env = np.array(imageio.imread_v2(envName, format='HDR-FI'))
     if not env is None:
         env = env.reshape(env_rows, envHeightOrig, env_cols, envWidthOrig, 3)
         env = np.ascontiguousarray(env.transpose([4, 0, 2, 1, 3]))
