@@ -1,25 +1,26 @@
-nepoch: 5
-
-batchsize: 16
+nepoch: 80
+batchsize: 128
+num_workers: 24
 lr: 1e-4
-lrate_decay_steps: 10000
-lrate_decay_factor: 0.5
+lrate_decay_steps: 5000
+lrate_decay_factor: 1.0
+lambda_mse: 0.3
+lambda_ang: 1.0
 
-normalization: group
-net_type: unet
-
-loss: conf
-lambda_conf: 0.2
-#loss: gaussian
-#lambda_gaussian: 0.1
-lambda_L1: 1.0
+normal:
+  norm_layer: group
+  depth_type: mvs
+  norm_type: max
 
 num_view_all: 9
-distributed: True
-num_workers: 6
 autocast: True
-randomseed: 2245
-i_img: 1000
+pinned: True
+randomseed: 7633
+i_img: 100
+i_img_up: 1.3
+i_save: 2000
 i_print: 10
+
+
 
 

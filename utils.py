@@ -1,5 +1,6 @@
+import h5py
 import numpy as np
-import sys, re, struct
+import struct
 from PIL import Image
 import os.path as osp
 import imageio
@@ -18,16 +19,25 @@ img_bgr2rgb = lambda x: x[[2, 1, 0]]
 gray2rgb = lambda x: x.unsqueeze(2).repeat(1, 1, 3)
 
 to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
-mse2psnr = lambda x: -10. * np.log(x + TINY_NUMBER) / np.log(10.)
+mse2psnr = lambda x: -10. * np.log10(x + TINY_NUMBER)
 psnr2mse = lambda x: 10 ** -(x / (10.0))
 
 
 # img is B C H W
-def img2mse(x, y, mask=None):
+def img2mse(x, y, mask=None, weight=None):
     if mask is None:
         return torch.mean((x - y) ** 2)
+    elif weight is None:
+        return torch.sum((x - y) ** 2 * mask) / (torch.sum(mask) * (x.shape[1] / mask.shape[1]) + TINY_NUMBER)
     else:
-        return torch.sum((x - y) ** 2 * mask) / (torch.sum(mask) + TINY_NUMBER)
+        return torch.sum((x - y) ** 2 * mask * weight) / (torch.sum(mask) * (x.shape[1] / mask.shape[1]) + TINY_NUMBER)
+
+
+def img2L1Loss(x, y, mask=None):
+    if mask is None:
+        return torch.mean(torch.abs((x - y)))
+    else:
+        return torch.sum(torch.abs((x - y) * mask)) / (torch.sum(mask) * (x.shape[1] / mask.shape[1]) + TINY_NUMBER)
 
 
 # img is B C H W
@@ -42,9 +52,10 @@ def img2angerr(x, y, mask=None):
 # img is B C H W
 def img2log_mse(x, y, mask=None):
     if mask is None:
-        return torch.mean(torch.log(x + 1.0) - torch.log(y + 1.0) ** 2)
+        return torch.mean((torch.log(x + 1.0) - torch.log(y + 1.0)) ** 2)
     else:
-        return torch.sum((torch.log(x + 1.0) - torch.log(y + 1.0)) ** 2 * mask) / (torch.sum(mask) + TINY_NUMBER)
+        return torch.sum((torch.log(x + 1.0) - torch.log(y + 1.0)) ** 2 * mask) / (
+                    torch.sum(mask) * (x.shape[1] / mask.shape[1]) + TINY_NUMBER)
 
 
 def img2psnr(x, y, mask=None):
@@ -65,12 +76,19 @@ def th_save_img_accum(img_name, img, accum_name, accum):
     imageio.imwrite(accum_name, accum)
 
 
-def tocuda(vars, gpu):
+def th_save_h5(img_name, img):
+    im = img.detach().cpu().numpy()
+    hf = h5py.File(img_name, 'w')
+    hf.create_dataset('data', data=im, compression='lzf')
+    hf.close()
+
+
+def tocuda(vars, gpu, non_blocking=False):
     if isinstance(vars, list):
         out = []
         for var in vars:
             if isinstance(var, torch.Tensor):
-                out.append(var.to(gpu))
+                out.append(var.to(gpu, non_blocking=non_blocking))
             elif isinstance(var, str):
                 out.append(var)
             else:
@@ -80,7 +98,7 @@ def tocuda(vars, gpu):
         out = {}
         for k in vars:
             if isinstance(vars[k], torch.Tensor):
-                out[k] = vars[k].to(gpu)
+                out[k] = vars[k].to(gpu, non_blocking=non_blocking)
             elif isinstance(vars[k], str):
                 out[k] = vars[k]
             elif isinstance(vars[k], list):
@@ -90,11 +108,23 @@ def tocuda(vars, gpu):
         return out
 
 
-def cvimg_from_torch(tensor, iscolor=True):
-    if iscolor:
-        tensor = img_rgb2bgr(tensor)
-    tensor = img_CHW2HWC(tensor)
-    image = np.clip((tensor.detach().cpu().numpy() * 255.0), 0, 255).astype(np.uint8)
+def cv2_from_torch(tensor_or_array):
+    if torch.is_tensor(tensor_or_array):
+        if torch.max(tensor_or_array) > 1:
+            tensor_or_array = tensor_or_array / torch.max(tensor_or_array)
+        if tensor_or_array.shape[0] == 3:
+            tensor_or_array = img_rgb2bgr(tensor_or_array)
+        tensor_or_array = img_CHW2HWC(tensor_or_array)
+        image = np.clip((tensor_or_array.detach().cpu().numpy() * 255.0), 0, 255).astype(np.uint8)
+    elif type(tensor_or_array).__module__ == np.__name__:
+        if np.max(tensor_or_array) > 1:
+            tensor_or_array = tensor_or_array / np.max(tensor_or_array)
+        if tensor_or_array.shape[0] == 3:
+            tensor_or_array = img_rgb2bgr(tensor_or_array)
+        tensor_or_array = np.transpose(tensor_or_array, (1, 2, 0))
+        image = np.clip((tensor_or_array * 255.0), 0, 255).astype(np.uint8)
+    else:
+        return None
     return image
 
 
@@ -107,19 +137,15 @@ def srgb2rgb(srgb):
     return ret
 
 
-def loadImage(imName, isGama=False, resize=False, W=None, H=None):
+def loadImage(imName, normalize_01=True):
     if not (osp.isfile(imName)):
         print(imName)
         assert (False)
-
     im = Image.open(imName)
-    if resize:
-        im = im.resize([W, H], Image.ANTIALIAS)
 
-    im = np.asarray(im, dtype=float)
-    if isGama:
-        im = (im / 255.0) ** 2.2
-        im = 2 * im - 1
+    im = np.array(im, dtype=float)
+    if normalize_01:
+        im /= 255.0
     else:
         im = (im - 127.5) / 127.5
     if len(im.shape) == 2:
@@ -150,7 +176,7 @@ def get_hdr_scale(hdr, seg, phase):
 
     if phase.upper() == 'TRAIN' or phase.upper() == 'DEBUG':
         scale = (0.95 - 0.1 * np.random.random()) / np.clip(intensity_almost_max, 0.1, None)
-    elif phase.upper() == 'TEST':
+    elif phase.upper() == 'TEST' or phase.upper() == 'ALL':
         scale = (0.95 - 0.05) / np.clip(intensity_almost_max, 0.1, None)
     else:
         raise Exception('!!')
@@ -190,6 +216,25 @@ def loadEnvmap(envName, env_height, env_width, env_rows, env_cols):
 
     else:
         raise Exception('env does not exist')
+
+
+def writeH5ToFile(imBatch, nameBatch):
+    batchSize = imBatch.size(0)
+    assert (batchSize == len(nameBatch))
+    for n in range(0, batchSize):
+        im = imBatch[n, :, :, :].data.cpu().numpy()
+        hf = h5py.File(nameBatch[n], 'w')
+        hf.create_dataset('data', data=im, compression='lzf')
+        hf.close()
+
+
+def loadH5(imName):
+    try:
+        hf = h5py.File(imName, 'r')
+        im = np.array(hf.get('data'))
+        return im
+    except:
+        return None
 
 
 def predToShading(pred, envWidth=32, envHeight=16, SGNum=12):
@@ -235,16 +280,17 @@ def predToShading(pred, envWidth=32, envHeight=16, SGNum=12):
 
 def LSregress(pred, gt, origin):
     nb = pred.size(0)
-    origSize = pred.size()
+    origdim = pred.ndim - 1
     pred = pred.reshape(nb, -1)
     gt = gt.reshape(nb, -1)
 
     coef = (torch.sum(pred * gt, dim=1) / torch.clamp(torch.sum(pred * pred, dim=1), min=1e-5)).detach()
     coef = torch.clamp(coef, 0.001, 1000)
-    for n in range(0, len(origSize) - 1):
-        coef = coef.unsqueeze(-1)
+    coef = coef.reshape(coef.shape + (1,) * origdim)
+    # for n in range(0, len(origSize) - 1):
+    #     coef = coef.unsqueeze(-1)
     # pred = pred.reshape(origSize)
-    predNew = origin * coef.expand(origSize)
+    predNew = origin * coef
     return predNew
 
 

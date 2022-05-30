@@ -1,6 +1,6 @@
 import os
 from tqdm import tqdm
-from render_func import *
+from forward import *
 import time
 import numpy as np
 from mvsd_dataset import Openrooms_FF

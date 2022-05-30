@@ -30,22 +30,27 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False):
         cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
         cfg = CfgNode(cfg_dict)
 
-    seed = cfg.randomseed
-    random.seed(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+    experiment = '/new_disk/happily/Data/MVSD_output/stage1-1/20220517_stage1-1_group_1e-4_64'
 
-    config = config.replace('.yml', '')
-    experiment = f'{outputRoot}/{config}'
+    device = torch.device('cuda:{}'.format(gpu))
+    curr_model = MonoNormalModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
+    im = loadHdr('/new_disk/happily/Data/OpenRooms_FF/mainDiffLight_xml/scene0151_00/1_im_5.rgbe')
+    seg = loadImage('/new_disk/happily/Data/OpenRooms_FF/mainDiffLight_xml/scene0151_00/1_immask_5.png')[0:1, :, :]
+    scene_scale = get_hdr_scale(im, seg, 'TEST')
+    im = np.clip(im * scene_scale, 0, 1.0)
 
-    curr_model = SVNormalModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
+    depth = loadBinary('/new_disk/happily/Data/OpenRooms_FF/mainDiffLight_xml/scene0151_00/1_depthestnorm_5.dat')
+    conf = loadBinary('/new_disk/happily/Data/OpenRooms_FF/mainDiffLight_xml/scene0151_00/1_depthestnorm_5.dat')
+    normal_pred = curr_model.normal_net(torch.from_numpy(np.concatenate([im, depth, conf]).astype(np.float32))[None].to(device))
+    normal = 0.5 * (normal_pred + 1)
+    print()
 
-    val_dataset = Openrooms_FF_single(dataRoot, cfg, 'TEST', debug)
-    val_loader = DataLoader(val_dataset, batch_size=10, shuffle=False)
-
-    writer = SummaryWriter(experiment)
-
-    eval_model(writer, curr_model, None, val_loader, gpu, 31, cfg, 'normal', True)
+    # val_dataset = Openrooms_FF_single(dataRoot, cfg, 'TEST', debug)
+    # val_loader = DataLoader(val_dataset, batch_size=10, shuffle=False)
+    #
+    # writer = SummaryWriter(experiment)
+    #
+    # eval_model(writer, curr_model, None, val_loader, gpu, 31, cfg, 'normal', True)
 
 
 
