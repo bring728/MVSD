@@ -108,7 +108,7 @@ def tocuda(vars, gpu, non_blocking=False):
         return out
 
 
-def cv2_from_torch(tensor_or_array):
+def cv2fromtorch(tensor_or_array):
     if torch.is_tensor(tensor_or_array):
         if torch.max(tensor_or_array) > 1:
             tensor_or_array = tensor_or_array / torch.max(tensor_or_array)
@@ -291,7 +291,7 @@ def LSregress(pred, gt, origin):
     #     coef = coef.unsqueeze(-1)
     # pred = pred.reshape(origSize)
     predNew = origin * coef
-    return predNew
+    return predNew, coef
 
 
 def cycle(iterable):

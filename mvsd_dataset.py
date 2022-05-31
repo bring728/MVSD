@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from torch.utils.data import Dataset
 from utils import *
 import random
@@ -79,7 +80,8 @@ class Openrooms_FF(Dataset):
         src_c2w_list = []
         src_int_list = []
         rgb_list = []
-        depth_list = []
+        # depth_list = []
+        depthest_list = []
         conf_list = []
         depth_norm_list = []
         for idx in training_pair_idx:
@@ -92,18 +94,24 @@ class Openrooms_FF(Dataset):
             src_int_list.append(intrinsic)
             rgb_list.append(im)
 
-            if self.cfg.depth_gt:
-                depth = loadBinary(name_list[idx].format('imdepth', 'dat'))
-            else:
-                depth = loadBinary(name_list[idx].format('depthest', 'dat'))
-            depth_list.append(depth)
+            # if self.cfg.depth_gt:
+            #     depth = loadBinary(name_list[idx].format('imdepth', 'dat'))
+            # else:
+            #     depth = loadBinary(name_list[idx].format('depthest', 'dat'))
+            # depth = loadBinary(name_list[idx].format('imdepth', 'dat'))
+            # depth_list.append(depth)
+
+            depthest = loadBinary(name_list[idx].format('depthest', 'dat'))
+            depthest_list.append(depthest)
             conf_list.append(loadBinary(name_list[idx].format('conf', 'dat')))
 
             if self.cfg.BRDF.input_feature == 'rgbdc':
                 depth_norm_list.append(loadBinary(name_list[idx].format('depthestnorm', 'dat')))
 
         batchDict['rgb'] = np.stack(rgb_list, 0).astype(np.float32)
-        batchDict['depth'] = np.stack(depth_list, 0).astype(np.float32)
+        # batchDict['depth'] = np.stack(depth_list, 0).astype(np.float32)
+        batchDict['depthest'] = np.stack(depthest_list, 0).astype(np.float32)
+
         batchDict['conf'] = np.stack(conf_list, 0).astype(np.float32)
         if self.cfg.BRDF.input_feature == 'rgbdc':
             batchDict['depth_norm'] = np.stack(depth_norm_list, 0).astype(np.float32)
@@ -185,35 +193,35 @@ class Openrooms_FF_single(Dataset):
             seg = np.concatenate([segObj, segArea + segObj], axis=0).astype(np.float32)  # segBRDF, segAll
         batchDict['mask'] = seg
 
+        # depthest = loadBinary(name.format('depthest', 'dat'))
+        # conf = loadBinary(name.format('conf', 'dat'))
+        # np.unravel_index(np.argmax(conf, axis=None), conf.shape)
+        # depthgt = loadBinary(name.format('imdepth', 'dat'))
+        # mask = conf > 0.8
+        # depthest2, coef = LSregress(torch.from_numpy(depthest * mask), torch.from_numpy(depthgt * mask), torch.from_numpy(depthest))
+        # depthest2 = depthest2.numpy()
+        # depthest3 = depthest / 4 * 3
+        # a = np.sum(np.abs(depthest - depthgt) * mask) / (np.sum(mask) * (depthest.shape[1] / mask.shape[1]) + TINY_NUMBER)
+        # b = np.mean(np.abs(depthest - depthgt))
+        # c = np.sum(np.abs(depthest2 - depthgt) * mask) / (np.sum(mask) * (depthest2.shape[1] / mask.shape[1]) + TINY_NUMBER)
+        # d = np.mean(np.abs(depthest2 - depthgt))
+        # e = np.sum(np.abs(depthest3 - depthgt) * mask) / (np.sum(mask) * (depthest3.shape[1] / mask.shape[1]) + TINY_NUMBER)
+        # f = np.mean(np.abs(depthest3 - depthgt))
+        # tt = {'a': a}
+        # return tt
+
         im = np.clip(im * scene_scale, 0, 1.0)
-
-        depthest = loadBinary(name.format('depthest', 'dat'))
-        depthest2 = loadBinary(name.format('depthest', 'dat')) / 2
-        conf = loadBinary(name.format('conf', 'dat'))
-        np.unravel_index(np.argmax(conf, axis=None), conf.shape)
-        depthgt = loadBinary(name.format('imdepth', 'dat'))
-
-        mask = conf > 0.8
-        a = np.sum(np.abs(depthest - depthgt) * mask) / (np.sum(mask) * (depthest.shape[1] / mask.shape[1]) + TINY_NUMBER)
-        b = np.mean(np.abs(depthest - depthgt))
-
-        c = np.sum(np.abs(depthest2 - depthgt) * mask) / (np.sum(mask) * (depthest2.shape[1] / mask.shape[1]) + TINY_NUMBER)
-        d = np.mean(np.abs(depthest2 - depthgt))
-        tt = {'a': a}
-        return tt
-
         if self.cfg.normal.depth_type == 'mvs':
+            conf = loadBinary(name.format('conf', 'dat'))
             if self.cfg.normal.norm_type == 'max':
-                depthmvs_normalized = loadBinary(name.format('depthestmax', 'dat'))
-                conf = loadBinary(name.format('conf', 'dat'))
+                depthmvs_normalized = loadBinary(name.format('depthnormmax', 'dat'))
                 input_data = np.concatenate([im, depthmvs_normalized, conf], axis=0).astype(np.float32)
             else:
-                depthmvs_normalized = loadBinary(name.format('depthestnorm', 'dat'))
-                conf = loadBinary(name.format('conf', 'dat'))
+                depthmvs_normalized = loadBinary(name.format('depthnormzero', 'dat'))
                 input_data = np.concatenate([im, depthmvs_normalized, conf], axis=0).astype(np.float32)
         else:
-            depthmvs_normalized = loadBinary(name.format('depthestnorm', 'dat'))
-            input_data = np.concatenate([im, depthmvs_normalized], axis=0).astype(np.float32)
+            midas_normalized = loadBinary(name.format('midas', 'dat'))
+            input_data = np.concatenate([im, midas_normalized], axis=0).astype(np.float32)
         batchDict['input'] = input_data
 
         if self.stage == '1-1' and not self.phase == 'ALL':

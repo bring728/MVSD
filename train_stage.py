@@ -44,7 +44,7 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
         if not train_sampler is None:
             train_sampler.set_epoch(epoch)
         for train_data in train_loader:
-            continue
+            # continue
             global_step += 1
             save_image_flag = global_step % i_img == 1
             train_data = tocuda(train_data, gpu, cfg.pinned)
@@ -55,9 +55,8 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
             scaler.step(curr_model.optimizer)
             scaler.update()
 
-
-            # curr_model.scheduler.step()
-            # scalars_to_log['lr'] = curr_model.scheduler.get_last_lr()[0]
+            curr_model.scheduler.step()
+            scalars_to_log['lr'] = curr_model.scheduler.get_last_lr()[0]
 
             if record_flag:
                 wandb_obj.log(scalars_to_log)
@@ -88,4 +87,4 @@ if __name__ == "__main__":
     phase = 'TRAIN'
     is_DDP = False
     resume = False
-    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1-1_0.yml', is_DDP=is_DDP, resume=resume)
+    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1-1_2.yml', is_DDP=is_DDP, resume=resume)

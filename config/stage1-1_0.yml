@@ -1,5 +1,5 @@
-nepoch: 80
-batchsize: 128
+nepoch: 40
+batchsize: 88
 num_workers: 24
 lr: 1e-4
 lrate_decay_steps: 5000

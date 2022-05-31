@@ -28,9 +28,10 @@ def record_images(stage, cfg, wandb_obj, data, pred, step, val=False):
     log_image_dict = {}
     if stage == '1-1':
         normal_gt = data['normal_gt']
+        rgb = data['input'][0, :3, ...]
         depth_input = data['input'][0, 3, ...]
         depth_input = depth_input.expand(normal_gt[0].size())
-        imgs = [(0.5 * (normal_gt[0] + 1)), (0.5 * (pred['normal'][0] + 1)), depth_input]
+        imgs = [(0.5 * (normal_gt[0] + 1)), (0.5 * (pred['normal'][0] + 1)), rgb, depth_input]
 
         num_img = len(imgs)
         c, h, w = imgs[0].shape

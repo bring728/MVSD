@@ -11,13 +11,12 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
         total_loss = None
         if stage == '1-1':
             normal_pred = curr_model.normal_net(data['input'])
-
             normal_mse_err = img2mse(normal_pred, data['normal_gt'], data['mask'][:, 1:, ...])
             normal_ang_err = img2angerr(normal_pred, data['normal_gt'], data['mask'][:, 1:, ...])
-            total_loss = cfg.lambda_mse * normal_mse_err + cfg.lambda_ang * normal_ang_err
-
             scalars_to_log['train/normal_mse_err'] = normal_mse_err.item()
             scalars_to_log['train/normal_ang_err'] = normal_ang_err.item()
+            total_loss = cfg.lambda_mse * normal_mse_err + cfg.lambda_ang * normal_ang_err
+            scalars_to_log['train/total_loss'] = total_loss.item()
             pred['normal'] = normal_pred
         elif stage == '1-2':
             with torch.no_grad():
@@ -70,7 +69,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 pred['envmaps'] = envmaps_pred
 
             pixel_batch = helper_dict['pixels']
-            rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'][0], data['c2w'][0], data['depth'][0], data['rgb'][0],
+            rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'][0], data['c2w'][0], data['depthest'][0], data['rgb'][0],
                                                              featmaps)
             normal_pred = data['normal'].permute(2, 3, 0, 1)
             DL_target = F.grid_sample(data['DL'], pixel_batch[..., 3:][None], align_corners=False).permute(2, 3, 0, 1)
@@ -115,7 +114,8 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
 def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list, featmaps):
     h, w = depth_list.shape[2:]
     w2c_list = torch.inverse(c2w_list)
-    pixel_depth = depth_list[0, 0][..., None, None]  # reshape order is x - y! (last index is priority)
+    pixel_depth = depth_list[0, 0][..., None, None]
+    pixel_depth2 = depth_list[0, 0][..., None, None] * 2 / 3
 
     cam_coord = pixel_depth * torch.inverse(int_list[0]) @ pixel_batch[..., :3, None]
     # because cam_0 is world
@@ -126,6 +126,18 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list, fea
     pixel_coord_k = (int_list[:, None, None] @ cam_coord_k)[..., 0]
     pixel_depth_k = torch.clamp(pixel_coord_k[..., 2:3], min=1e-5)
     pixel_coord_k = pixel_coord_k[..., :2] / pixel_depth_k
+
+    # pixel_depth = depth_list[0, 0][..., None, None] * 2 / 3
+    #
+    # cam_coord = pixel_depth * torch.inverse(int_list[0]) @ pixel_batch[..., :3, None]
+    # # because cam_0 is world
+    # world_coord = torch.cat([cam_coord, torch.ones_like(cam_coord[:, :, :1, :])], dim=-2)
+    #
+    # # get projection coord
+    # cam_coord_k = (w2c_list[:, None, None] @ world_coord[None])[..., :3, :]
+    # pixel_coord_k = (int_list[:, None, None] @ cam_coord_k)[..., 0]
+    # pixel_depth_k = torch.clamp(pixel_coord_k[..., 2:3], min=1e-5)
+    # pixel_coord_k_2 = pixel_coord_k[..., :2] / pixel_depth_k
 
     resize_factor = torch.tensor([w, h]).to(pixel_coord_k.device)[None, None, None, :]
     pixel_coord_k_norm = (2 * pixel_coord_k / resize_factor - 1.)
