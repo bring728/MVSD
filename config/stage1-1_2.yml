@@ -1,5 +1,5 @@
 nepoch: 40
-batchsize: 88
+batchsize: 96
 num_workers: 24
 lr: 1e-4
 lrate_decay_steps: 5000
@@ -9,8 +9,8 @@ lambda_ang: 1.0
 
 normal:
   norm_layer: group
-  depth_type: mvs
-  norm_type: max
+  depth_type: midas
+  norm_type: zero
 
 num_view_all: 9
 autocast: True

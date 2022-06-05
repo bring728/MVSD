@@ -2,6 +2,7 @@ import os
 import shutil
 import traceback
 import logging
+import logging.handlers
 import os.path as osp
 from multiprocessing import Pool, Manager
 import time
@@ -86,15 +87,20 @@ if __name__ == "__main__":
         new_scene = scene.replace(intermediate_path, dataroot)
         shutil.move(scene, new_scene)
 
-    logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(u'%(asctime)s [%(levelname)8s] %(message)s')
-    # StreamHandler
-    streamingHandler = logging.StreamHandler()
-    streamingHandler.setFormatter(formatter)
-    # FileHandler
-    file_handler = logging.FileHandler(osp.join(logroot, 'output.log'))
-    file_handler.setFormatter(formatter)
-    logger.addHandler(streamingHandler)
+    logger.setLevel(logging.DEBUG) # minimum level.. debug-info-warning-error-critical
+    logger.propagate = True
+    formatter = logging.Formatter("%(asctime)s;[%(levelname)s];%(message)s",
+                                  "%Y-%m-%d %H:%M:%S")
+    streamHandler = logging.StreamHandler()
+    streamHandler.setFormatter(formatter)
+
+    log_max_size = 100 * 1024 * 1024  # 100 mega bytes
+    log_file_count = 10
+    fileHandler = logging.handlers.RotatingFileHandler(filename=osp.join(logroot, 'log.txt'), maxBytes=log_max_size, backupCount=log_file_count, mode="w")
+    fileHandler.setFormatter(formatter)
+
+    logger.addHandler(fileHandler)
+    logger.addHandler(streamHandler)
 
     m = Manager()
     q = m.Queue()
@@ -130,27 +136,13 @@ if __name__ == "__main__":
 
                 if num_rgbe == 9 * num_npy and num_hdr == 18 * num_npy and num_dat == 9 * num_npy and num_png == 36 * num_npy:
                     logger.debug(f'{scene} is done. moving to optix_output.')
-                    #command = f'sshpass -p 8501 scp -r {scene} vig-titan-103@161.122.115.103:/media/vig-titan-103/mybookduo/OpenRooms_FF/{outdir_type}/'
-                    #os.system(command)
+                    command = f'sshpass -p 8501 scp -r {scene} vig-titan-103@161.122.115.103:/media/vig-titan-103/mybookduo/OpenRooms_FF/{outdir_type}/'
+                    os.system(command)
 
                     final_repository = osp.join(optix_output_path, outdir_type)
                     os.makedirs(final_repository, exist_ok=True)
                     time.sleep(1)
                     shutil.move(scene, final_repository)
-
-            # rendered_scene_list = glob.glob(osp.join(optix_output_path, '*'))
-            # for scene in rendered_scene_list:
-            #     all_files = os.listdir(scene)
-            #     ff_list = sorted(list(set([f.split('_')[0] for f in all_files])))
-            #     for k in ff_list:
-            #         k_all_files = glob.glob(osp.join(scene, f'{k}_*.rgbe')) + glob.glob(osp.join(scene, f'{k}_*.dat')) + glob.glob(
-            #             osp.join(scene, f'{k}_*.hdr')) + glob.glob(osp.join(scene, f'{k}_*.png')) + glob.glob(osp.join(scene, f'{k}_*.npy'))
-            #         if len(k_all_files) == 64:
-            #             done_dir = osp.join(optix_output_path, scene.split(intermediate_path)[1])
-            #             os.makedirs(done_dir, exist_ok=True)
-            #             k_new_files = [f.replace(intermediate_path, optix_output_path) for f in k_all_files]
-            #             for f_old, f_new in zip(k_all_files, k_new_files):
-            #                 os.rename(f_old, f_new)
 
             logger.debug(f'all scenes : {num_pushed}, waiting additional data...')
             time.sleep(120)

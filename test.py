@@ -1,6 +1,6 @@
 import os
 from tqdm import tqdm
-from render_func import *
+from forward import *
 import time
 from mvsd_dataset import Openrooms_dataset
 from torch.utils.data import DataLoader

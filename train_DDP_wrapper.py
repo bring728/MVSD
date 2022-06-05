@@ -1,19 +1,26 @@
 import sys
-from train_stage_1_2 import train
 import torch
+from train_stage import train
+from output_stage import output_stage_func
+import os
 
-if not torch.cuda.is_available():
-    assert 'gpu isnt ready!'
+torch.backends.cudnn.benchmark = True
+
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        num_gpu = 2
-        config = 'stage1-2_0.yml'
+        num_gpu = 8
+        config = 'stage1-1_0.yml'
     else:
         num_gpu = int(sys.argv[1])
         config = sys.argv[2]
 
+    if num_gpu == 7:
+        os.environ['CUDA_VISIBLE_DEVICES'] = '1,2,3,4,5,6,7'
+
     debug = False
     phase = 'TRAIN'
     is_DDP = True
-    torch.multiprocessing.spawn(train, nprocs=num_gpu, args=(num_gpu, config, debug, phase, is_DDP))
+    resume = False
+    torch.multiprocessing.spawn(train, nprocs=num_gpu, args=(num_gpu, config, debug, phase, is_DDP, resume))
+    print('training is done.')

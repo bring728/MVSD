@@ -144,42 +144,67 @@ def fused_mean_variance(x, weight, dim):
     return mean, var
 
 
+def fused_mean(x, weight, dim):
+    mean = torch.sum(x * weight, dim=dim, keepdim=True)
+    return mean
+
+
 class BRDFNet(nn.Module):
-    def __init__(self, args, in_feat_ch=32):
+    def __init__(self, cfg):
+        self.cfg = cfg
         super(BRDFNet, self).__init__()
-        self.args = args
         activation_func = nn.ELU(inplace=True)
+        if cfg.BRDF.input_pbr_mlp == 'vector':
+            input_ch = 3 + 3 + cfg.DL.SGNum * 7
+        elif cfg.BRDF.input_pbr_mlp == 'dot':
+            input_ch = 1 + cfg.DL.SGNum * 6
+        else:
+            raise Exception('input_pbr_mlp error')
 
-        self.perview_decompose = nn.Sequential(nn.Linear((in_feat_ch + 3) * 3 + 3, 64), activation_func,
-                                               nn.Linear(64, 64), activation_func,
-                                               nn.Linear(64, 32), activation_func,
-                                               nn.Linear(32, 32), activation_func)
+        self.pbr_mlp = nn.Sequential(nn.Linear(input_ch, 64), activation_func,
+                                     nn.Linear(64, 64), activation_func,
+                                     nn.Linear(64, 64), activation_func,
+                                     nn.Linear(64, 32), activation_func, )
 
-        self.multiview_decompose = nn.Sequential(nn.Linear(65, 64), activation_func,
-                                                 nn.Linear(64, 64), activation_func,
-                                                 nn.Linear(64, 32), activation_func,
-                                                 nn.Linear(32, 32), activation_func,
-                                                 nn.Linear(32, 7), nn.Tanh(),
-                                                 )
+        self.perview_mlp = nn.Sequential(nn.Linear((cfg.BRDF.feature_dims + 3) * 3 + 32, 64), activation_func,
+                                         nn.Linear(64, 64), activation_func,
+                                         nn.Linear(64, 64), activation_func,
+                                         nn.Linear(64, 64), activation_func,
+                                         nn.Linear(64, 32), activation_func, )
 
-        self.perview_decompose.apply(weights_init)
-        self.multiview_decompose.apply(weights_init)
+        self.perview_mlp.apply(weights_init)
+        self.pbr_mlp.apply(weights_init)
 
-    def forward(self, rgb_feat_viewdir_err):
-        num_views = rgb_feat_viewdir_err.shape[1]
-        weight = rgb_feat_viewdir_err[..., -1:]
-        weight = -torch.clamp(torch.log10(torch.abs(weight) + TINY_NUMBER), min=None, max=0)
+    def forward(self, rgb_feat, view_dir, proj_err, normal, DL):
+        num_views = rgb_feat.shape[2]
+        # GT weight
+        weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
         weight = weight / (torch.sum(weight, dim=1, keepdim=True) + TINY_NUMBER)
 
-        rgb_feat = rgb_feat_viewdir_err[..., :-4]
-        view_dir = rgb_feat_viewdir_err[..., -4:-1]
+        h, w, _, n = DL.shape
+        DL = DL.reshape(h, w, 1, self.cfg.DL.SGNum, 7)
+        axis = DL[..., :3]
+        DL_axis = axis / torch.clamp(torch.sqrt(torch.sum(axis * axis, dim=-1, keepdim=True)), min=1e-6)
+        if self.cfg.BRDF.input_pbr_mlp == 'vector':
+            DL[..., :3] = DL_axis
+            DL = DL.reshape((h, w, 1, -1))
+            pbr_batch = torch.cat([torch.cat([normal, DL], dim=-1).expand(-1, -1, num_views, -1), view_dir], dim=-1)
+        else:
+            DLdotN = torch.sum(DL_axis * normal[:, :, :, None], dim=-1)
+            hdotV = (torch.sum(DL_axis * view_dir[:, :, :, None], dim=-1) + 1) / 2
+            VdotN = torch.sum(view_dir * normal, dim=-1, keepdim=True)
+            sharp = DL[..., 3:4].reshape((h, w, 1, -1))
+            intensity = DL[..., 4:].reshape((h, w, 1, -1))
+            pbr_batch = torch.cat([torch.cat([DLdotN, sharp, intensity], dim=-1).expand(h, w, num_views, -1), hdotV, VdotN], dim=-1)
+        pbr_feature = self.pbr_mlp(pbr_batch)
 
-        mean, var = fused_mean_variance(rgb_feat, weight, dim=1)
-        globalfeat = torch.cat([mean, var], dim=-1)  # [n_rays, n_samples, 1, 2*n_feat]
-        x = torch.cat([torch.cat([globalfeat.expand(-1, num_views, -1), rgb_feat], dim=-1), view_dir], dim=-1)
-        x = self.perview_decompose(x)
+        mean, var = fused_mean_variance(rgb_feat, weight, dim=-2)
+        globalfeat = torch.cat([mean, var], dim=-1)
+        x = torch.cat([globalfeat.expand(-1, -1, num_views, -1), rgb_feat, pbr_feature], dim=-1)
+        x = self.perview_mlp(x)
 
-        mean, var = fused_mean_variance(x, weight, dim=1)
-        globalfeat = torch.cat([mean.squeeze(1), var.squeeze(1), weight.mean(dim=1)], dim=-1)  # [n_rays, n_samples, 32*2+1]
-        out = self.multiview_decompose(globalfeat)
-        return torch.clamp(1.01 * out, -1, 1)
+        mean = fused_mean(x, weight, dim=-2)
+        # globalfeat = torch.cat([mean.squeeze(1), var.squeeze(1), weight.mean(dim=1)], dim=-1)  # [n_rays, n_samples, 32*2+1]
+        # out = self.multiview_mlp(globalfeat)
+        # return 0.5 * (torch.clamp(1.01 * out, -1, 1) + 1)
+        return mean.squeeze(2)
