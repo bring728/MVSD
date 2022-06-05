@@ -1,14 +1,10 @@
 #!/bin/bas#!/bin/bash
 
-python3 ~/PycharmProjects/MVSD/train_DDP_wrapper.py 8 'stage1-1_0.yml'
+python3 ~/PycharmProjects/MVSD/stage_train_DDP_wrapper.py 8 'stage1-2_1.yml'
 wait
 
-python3 ~/PycharmProjects/MVSD/train_DDP_wrapper.py 8 'stage1-1_1.yml'
+python3 ~/PycharmProjects/MVSD/stage_train_DDP_wrapper.py 8 'stage1-2_0.yml'
 wait
-
-python3 ~/PycharmProjects/MVSD/train_DDP_wrapper.py 8 'stage1-1_2.yml'
-wait
-
 
 
 #output_txt="10_rendered.txt"

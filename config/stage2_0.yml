@@ -47,7 +47,7 @@ num_view_all: 9
 num_view_min: 6
 autocast: True
 pinned: True
-randomseed: 2245
+randomseed: 3127
 i_img: 100
 i_save: 3000
 i_print: 10

@@ -274,10 +274,7 @@ def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride
 class NormalNet(nn.Module):
     def __init__(self, cfg):
         super(NormalNet, self).__init__()
-        if cfg.depth_type == 'mvs':
-            self.layer_d_1 = make_layer(pad_type='rep', in_ch=5, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
-        else:
-            self.layer_d_1 = make_layer(pad_type='rep', in_ch=4, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
+        self.layer_d_1 = make_layer(pad_type='rep', in_ch=5, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
         self.layer_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
         self.layer_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
         self.layer_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)

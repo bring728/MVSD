@@ -1,4 +1,4 @@
-nepoch: 100
+nepoch: 80
 batchsize: 128
 num_workers: 24
 lr: 1e-4
@@ -7,8 +7,7 @@ lrate_decay_factor: 1.0
 lambda_vis_prior: 0.001
 
 normal:
-  path:
-  depth_type: mvs
+  path: 06022018_stage1-1
   norm_layer: group
 
 DL:

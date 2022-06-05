@@ -1,5 +1,6 @@
 from models import MonoNormalModel, MonoDirectLightModel, SG2env, BRDFModel
-import copy
+import pyarrow as pa
+import lmdb
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -54,37 +55,34 @@ def load_id_wandb(config, record_flag, resume, root):
     return stage, cfg, model_type, run_id, wandb_obj, dataRoot, outputRoot, experiment
 
 
-def load_dataloader(stage, dataRoot, cfg, phase, debug, is_DDP, num_gpu, record_flag):
-    val_loader = None
+def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, gpu, num_gpu, record_flag):
     worker_per_gpu = int(cfg.num_workers / num_gpu)
     if stage.startswith('1'):
-        train_dataset = Openrooms_FF_single(dataRoot, cfg, stage, phase, debug)
-        if not phase == 'ALL':
-            val_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TEST', debug)
+        train_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TRAIN', debug, gpu)
+        val_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TEST', debug, gpu)
+
         batch_per_gpu = int(cfg.batchsize / num_gpu)
     else:
-        train_dataset = Openrooms_FF(dataRoot, cfg, stage, phase, debug)
-        if not phase == 'ALL':
-            val_dataset = Openrooms_FF(dataRoot, cfg, stage, 'TEST', debug)
+        train_dataset = Openrooms_FF(dataRoot, cfg, stage, 'TRAIN', debug)
+        val_dataset = Openrooms_FF(dataRoot, cfg, stage, 'TEST', debug)
         batch_per_gpu = 1
 
-    if debug and not phase == 'ALL':
-        batch_per_gpu = 1
-        worker_per_gpu = 0
+    if debug:
+        batch_per_gpu = 10
+        worker_per_gpu = 3
 
     train_sampler = None
     if is_DDP:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     # is_shuffle = not is_DDP and not debug
     is_shuffle = not is_DDP
+    # is_shuffle = False
     train_loader = DataLoader(train_dataset, batch_size=batch_per_gpu, shuffle=is_shuffle, num_workers=worker_per_gpu,
                               pin_memory=cfg.pinned, sampler=train_sampler)
-    if not phase == 'ALL':
-        val_loader = DataLoader(val_dataset, batch_size=batch_per_gpu, num_workers=worker_per_gpu, shuffle=False)
-
+    val_loader = DataLoader(val_dataset, batch_size=batch_per_gpu, num_workers=worker_per_gpu, shuffle=False)
     if record_flag:
         print(f'create dataset - stage {stage}.')
-        print('total number of sample: %d' % train_dataset.count)
+        print('total number of sample: %d' % train_dataset.length)
         print('batch_per_gpu', batch_per_gpu, 'worker_per_gpu', worker_per_gpu)
     return train_loader, val_loader, train_sampler
 

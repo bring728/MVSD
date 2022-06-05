@@ -174,9 +174,9 @@ def get_hdr_scale(hdr, seg, phase):
     intensityArr.sort()
     intensity_almost_max = intensityArr[int(0.95 * length)]
 
-    if phase.upper() == 'TRAIN' or phase.upper() == 'DEBUG':
+    if phase.upper() == 'TRAIN':
         scale = (0.95 - 0.1 * np.random.random()) / np.clip(intensity_almost_max, 0.1, None)
-    elif phase.upper() == 'TEST' or phase.upper() == 'ALL':
+    elif phase.upper() == 'TEST':
         scale = (0.95 - 0.05) / np.clip(intensity_almost_max, 0.1, None)
     else:
         raise Exception('!!')
@@ -237,6 +237,35 @@ def loadH5(imName):
         return None
 
 
+def loadH5_stage(imName, stage):
+    if stage == '1-1':
+        try:
+            hf = h5py.File(imName, 'r')
+            name = hf.attrs['name']
+            mask = np.array(hf.get('mask'))
+            dc = np.array(hf.get('dc'))
+            hdr = np.array(hf.get('hdr'))
+            max_intensity = np.array(hf.get('max_intensity'))
+            normal = np.array(hf.get('normal_gt'))
+            hf.close()
+            return name, mask, dc, hdr, max_intensity, normal, None, None
+        except:
+            return None
+    elif stage == '1-2':
+        try:
+            hf = h5py.File(imName, 'r')
+            name = hf.attrs['name']
+            mask = np.array(hf.get('mask'))
+            dc = np.array(hf.get('dc'))
+            hdr = np.array(hf.get('hdr'))
+            max_intensity = np.array(hf.get('max_intensity'))
+            DL_gt = np.array(hf.get('DL_gt'))
+            DL_ind = np.array(hf.get('DL_ind'))
+            hf.close()
+            return name, mask, dc, hdr, max_intensity, None, DL_gt, DL_ind
+        except:
+            return None
+
 def predToShading(pred, envWidth=32, envHeight=16, SGNum=12):
     Az = ((np.arange(envWidth) + 0.5) / envWidth - 0.5) * 2 * np.pi
     El = ((np.arange(envHeight) + 0.5) / envHeight) * np.pi / 2.0
@@ -291,7 +320,7 @@ def LSregress(pred, gt, origin):
     #     coef = coef.unsqueeze(-1)
     # pred = pred.reshape(origSize)
     predNew = origin * coef
-    return predNew, coef
+    return predNew
 
 
 def cycle(iterable):
