@@ -8,7 +8,7 @@ from xml.etree.ElementTree import ElementTree, parse
 processed_dir = '/home/vig-titan2/Data/OpenRooms_findpose/data/rendering/tmp'
 scenes_root = '/home/vig-titan2/Data/OpenRooms_findpose/data/rendering/scenes'
 num_gpu = 2
-depth_to_baseline = 0.06
+depth_to_baseline = 0.07
 min_baseline = 0.08
 max_baseline = 0.28
 
@@ -148,7 +148,7 @@ def main():
             print(f'{name} // all: {num_cam}, current idx: {k}, baseline: {baseline:.3f}')
 
             cv2.namedWindow(str(num_cam))  # Create a named window
-            cv2.moveWindow(str(num_cam), 1300, 500)  # Move it to (40,30)
+            cv2.moveWindow(str(num_cam), 100, 100)  # Move it to (40,30)
 
             im_previous = image_concater(im_list)
             if im_previous is not None:
