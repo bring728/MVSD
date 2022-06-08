@@ -1,8 +1,7 @@
 import torch
 import numpy as np
 import os
-from feature_net import *
-from mlp_network import BRDFNet
+from network import *
 import os.path as osp
 
 
@@ -266,7 +265,10 @@ class BRDFModel(object):
 
         # create feature extraction network
         self.feature_net = ResUNet(cfg).to(device)
-        self.brdf_net = BRDFNet(cfg).to(device)
+        if cfg.BRDF.net_type == 'mlp':
+            self.brdf_net = BRDF_mlp(cfg).to(device)
+        else:
+            self.brdf_net = BRDF_transformer(cfg).to(device)
         self.brdf_refine_net = BRDFRefineNet(cfg.BRDF).to(device)
 
         # count_parameters(self.feature_net)

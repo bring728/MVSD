@@ -31,7 +31,7 @@ BRDF:
   feature_dims: 24
   norm_layer: group
 #  refine_input: dc
-  refine_input: rgbdc
+  refine_input: dc
   conf: False
 
 GL:
