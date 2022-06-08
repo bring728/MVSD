@@ -41,28 +41,35 @@ def record_images(stage, cfg, wandb_obj, data, pred, step, val=False):
         log_image_dict[prefix + 'normal'] = wandb.Image(image)
 
     elif stage == '1-2':
-        imgs = [env_vis(data['envmaps_gt'][0], cfg.DL.env_height, cfg.DL.env_width, cfg.DL.env_rows, cfg.DL.env_cols),
-                env_vis(pred['envmaps'][0], cfg.DL.env_height, cfg.DL.env_width, cfg.DL.env_rows, cfg.DL.env_cols)]
-        num_img = len(imgs)
-        c, h, w = imgs[0].shape
-        image = torch.zeros(c, h, num_img * w)
-        for i in range(num_img):
-            image[:, :, i * w:(i + 1) * w] = imgs[i].type(torch.float32)
-        log_image_dict[prefix + 'directlight'] = wandb.Image(image)
-
         imgs = [data['input'][0, :3, ...] ** (1.0 / 2.2), (0.5 * (pred['normal'][0] + 1)),
                 data['input'][0, 3, ...].expand(pred['normal'][0].size())]
-        num_img = len(imgs)
+        num_img_all = 3
         c, h, w = imgs[0].shape
-        image = torch.zeros(c, h, num_img * w)
-        for i in range(num_img):
-            image[:, :, i * w:(i + 1) * w] = imgs[i].type(torch.float32)
-        log_image_dict[prefix + 'directlight_input'] = wandb.Image(image)
+        image_input = torch.zeros(c, h, num_img_all * w)
+        for i in range(num_img_all):
+            image_input[:, :, i * w:(i + 1) * w] = imgs[i].type(torch.float32)
+
+        imgs = []
+        env1 = env_vis(data['envmaps_gt'][0], cfg.DL.env_height, cfg.DL.env_width, cfg.DL.env_rows, cfg.DL.env_cols)
+        env2 = env_vis(pred['envmaps'][0], cfg.DL.env_height, cfg.DL.env_width, cfg.DL.env_rows, cfg.DL.env_cols)
+        imgs.append(F.interpolate(env1[None], size=[480, 640])[0])
+        imgs.append(F.interpolate(env2[None], size=[480, 640])[0])
+
+        num_img_output = 2
+        c, h, w = imgs[0].shape
+        image_output = torch.zeros(c, h, num_img_all * w)
+        for i in range(num_img_output):
+            image_output[:, :, i * w:(i + 1) * w] = imgs[i].type(torch.float32)
+
+        image = torch.cat([image_input, image_output], dim=1)
+        log_image_dict[prefix + 'directlight'] = wandb.Image(image)
 
     elif stage == '2':
         size_tmp = data['normal'][0].size()
-        depth = data['depth'][0, 0] / torch.quantile(data['depth'][0], 0.9)
-        depth = torch.clamp(depth, 0, 1)
+        # depth = data['depth'][0, 0] / torch.quantile(data['depth'][0], 0.9)
+        # depth = torch.clamp(depth, 0, 1)
+        depth = data['depth_norm'][0, 0]
+
         imgs = [data['rgb'][0, 0] ** (1.0 / 2.2), (0.5 * (data['normal'][0] + 1)), depth.expand(size_tmp),
                 data['conf'][0, 0].expand(size_tmp)]
         env = env_vis(pred['envmaps'][0], cfg.DL.env_height, cfg.DL.env_width, cfg.DL.env_rows, cfg.DL.env_cols)

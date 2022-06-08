@@ -393,10 +393,10 @@ class DirectLightingNet(nn.Module):
 class BRDFRefineNet(nn.Module):
     def __init__(self, cfg):
         super(BRDFRefineNet, self).__init__()
-        if cfg.refine_input != 'dc':
-            self.refine_d_1 = make_layer(pad_type='rep', in_ch=37, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
+        if cfg.refine_input == 'dc':
+            self.refine_d_1 = make_layer(pad_type='rep', in_ch=69, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
         else:
-            self.refine_d_1 = make_layer(pad_type='rep', in_ch=34, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
+            self.refine_d_1 = make_layer(pad_type='rep', in_ch=72, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
         self.refine_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
         self.refine_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
         self.refine_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
@@ -408,7 +408,10 @@ class BRDFRefineNet(nn.Module):
         self.refine_u_4 = make_layer(in_ch=256, out_ch=64, kernel=3, stride=1, num_group=8, norm_layer=cfg.norm_layer)
         self.refine_u_5 = make_layer(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=cfg.norm_layer)
 
-        self.refine_final = make_layer(pad_type='rep', in_ch=64, out_ch=5, kernel=3, stride=1, act='None', norm_layer='None')
+        if cfg.conf:
+            self.refine_final = make_layer(pad_type='rep', in_ch=64, out_ch=5, kernel=3, stride=1, act='None', norm_layer='None')
+        else:
+            self.refine_final = make_layer(pad_type='rep', in_ch=64, out_ch=4, kernel=3, stride=1, act='None', norm_layer='None')
 
     @autocast()
     def forward(self, x):

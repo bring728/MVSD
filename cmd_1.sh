@@ -1,9 +1,9 @@
 #!/bin/bas#!/bin/bash
 
-python3 ~/PycharmProjects/MVSD/stage_train_DDP_wrapper.py 8 'stage1-2_1.yml'
+python3 ~/PycharmProjects/MVSD/stage_train_DDP_wrapper.py 4 'stage1-2_1.yml'
 wait
 
-python3 ~/PycharmProjects/MVSD/stage_train_DDP_wrapper.py 8 'stage1-2_0.yml'
+python3 ~/PycharmProjects/MVSD/stage_train_DDP_wrapper.py 4 'stage1-2_0.yml'
 wait
 
 

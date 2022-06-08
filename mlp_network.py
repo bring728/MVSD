@@ -170,41 +170,38 @@ class BRDFNet(nn.Module):
                                          nn.Linear(64, 64), activation_func,
                                          nn.Linear(64, 64), activation_func,
                                          nn.Linear(64, 64), activation_func,
-                                         nn.Linear(64, 32), activation_func, )
+                                         nn.Linear(64, 64), activation_func, )
 
         self.perview_mlp.apply(weights_init)
         self.pbr_mlp.apply(weights_init)
 
     def forward(self, rgb_feat, view_dir, proj_err, normal, DL):
-        num_views = rgb_feat.shape[2]
+        bn, h, w, num_views, _ = rgb_feat.shape
         # GT weight
         weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
-        weight = weight / (torch.sum(weight, dim=1, keepdim=True) + TINY_NUMBER)
+        weight = weight / (torch.sum(weight, dim=-2, keepdim=True) + TINY_NUMBER)
 
-        h, w, _, n = DL.shape
-        DL = DL.reshape(h, w, 1, self.cfg.DL.SGNum, 7)
+        DL = DL.reshape(bn, h, w, 1, self.cfg.DL.SGNum, 7)
         axis = DL[..., :3]
         DL_axis = axis / torch.clamp(torch.sqrt(torch.sum(axis * axis, dim=-1, keepdim=True)), min=1e-6)
         if self.cfg.BRDF.input_pbr_mlp == 'vector':
             DL[..., :3] = DL_axis
-            DL = DL.reshape((h, w, 1, -1))
-            pbr_batch = torch.cat([torch.cat([normal, DL], dim=-1).expand(-1, -1, num_views, -1), view_dir], dim=-1)
+            DL = DL.reshape((bn, h, w, 1, -1))
+            pbr_batch = torch.cat([torch.cat([normal, DL], dim=-1).expand(-1, -1, -1, num_views, -1), view_dir], dim=-1)
         else:
-            DLdotN = torch.sum(DL_axis * normal[:, :, :, None], dim=-1)
-            hdotV = (torch.sum(DL_axis * view_dir[:, :, :, None], dim=-1) + 1) / 2
+            DLdotN = torch.sum(DL_axis * normal[:, :, :, :, None], dim=-1)
+            hdotV = (torch.sum(DL_axis * view_dir[:, :, :, :, None], dim=-1) + 1) / 2
             VdotN = torch.sum(view_dir * normal, dim=-1, keepdim=True)
-            sharp = DL[..., 3:4].reshape((h, w, 1, -1))
-            intensity = DL[..., 4:].reshape((h, w, 1, -1))
-            pbr_batch = torch.cat([torch.cat([DLdotN, sharp, intensity], dim=-1).expand(h, w, num_views, -1), hdotV, VdotN], dim=-1)
+            sharp = DL[..., 3:4].reshape((bn, h, w, 1, -1))
+            intensity = DL[..., 4:].reshape((bn, h, w, 1, -1))
+            pbr_batch = torch.cat([torch.cat([DLdotN, sharp, intensity], dim=-1).expand(-1, -1, -1, num_views, -1), hdotV, VdotN], dim=-1)
         pbr_feature = self.pbr_mlp(pbr_batch)
 
         mean, var = fused_mean_variance(rgb_feat, weight, dim=-2)
         globalfeat = torch.cat([mean, var], dim=-1)
-        x = torch.cat([globalfeat.expand(-1, -1, num_views, -1), rgb_feat, pbr_feature], dim=-1)
+        x = torch.cat([globalfeat.expand(-1, -1, -1, num_views, -1), rgb_feat, pbr_feature], dim=-1)
         x = self.perview_mlp(x)
-
-        mean = fused_mean(x, weight, dim=-2)
-        # globalfeat = torch.cat([mean.squeeze(1), var.squeeze(1), weight.mean(dim=1)], dim=-1)  # [n_rays, n_samples, 32*2+1]
-        # out = self.multiview_mlp(globalfeat)
-        # return 0.5 * (torch.clamp(1.01 * out, -1, 1) + 1)
-        return mean.squeeze(2)
+        x = fused_mean(x, weight, dim=-2).squeeze(-2)
+        view_dir_var = torch.var(torch.cat([torch.arctan(view_dir[..., 1:2] / view_dir[..., :1]), torch.arccos(view_dir[..., 2:])], dim=-1), dim=-2, unbiased=False)
+        weight_var = torch.var(weight, dim=-2, unbiased=False)
+        return torch.cat([x, view_dir_var, weight_var], dim=-1)
