@@ -17,6 +17,7 @@ import torch.nn.functional as F
 from torch.cuda.amp.autocast_mode import autocast
 from utils import TINY_NUMBER
 
+
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
@@ -159,7 +160,7 @@ class ResUNet(nn.Module):
         self.inplanes = 64
         self.groups = 1
         self.base_width = 64
-        if cfg.BRDF.input_feature == 'rgb':
+        if cfg.input == 'rgb':
             self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
                                    bias=False, padding_mode='reflect')
         else:
@@ -177,10 +178,10 @@ class ResUNet(nn.Module):
         self.upconv3 = upconv(filters[2], 128, 3, 2)
         self.iconv3 = conv(filters[1] + 128, 128, 3, 1)
         self.upconv2 = upconv(128, 64, 3, 2)
-        self.iconv2 = conv(filters[0] + 64, cfg.BRDF.feature_dims, 3, 1)
+        self.iconv2 = conv(filters[0] + 64, cfg.dims, 3, 1)
 
         # fine-level conv
-        self.out_conv = nn.Conv2d(cfg.BRDF.feature_dims, cfg.BRDF.feature_dims, 1, 1)
+        self.out_conv = nn.Conv2d(cfg.dims, cfg.dims, 1, 1)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         norm_layer = self._norm_layer
@@ -438,13 +439,8 @@ class ScaledDotProductAttention(nn.Module):
         super().__init__()
         self.temperature = temperature
 
-    def forward(self, q, k, v, mask=None):
+    def forward(self, q, k, v):
         attn = torch.matmul(q / self.temperature, k.transpose(2, 3))
-
-        if mask is not None:
-            attn = attn.masked_fill(mask == 0, -1e9)
-            # attn = attn * mask
-
         attn = F.softmax(attn, dim=-1)
         output = torch.matmul(attn, v)
 
@@ -488,21 +484,18 @@ class MultiHeadAttention(nn.Module):
         self.attention = ScaledDotProductAttention(temperature=d_k ** 0.5)
         self.layer_norm = nn.LayerNorm(d_model, eps=1e-6)
 
-    def forward(self, q, k, v, mask=None):
+    def forward(self, embed):
+        # embed : B H W N C
         d_k, d_v, n_head = self.d_k, self.d_v, self.n_head
-        sz_b, len_q, len_k, len_v = q.size(0), q.size(1), k.size(1), v.size(1)
-        residual = q
-        q = self.w_qs(q).view(sz_b, len_q, n_head, d_k)
-        k = self.w_ks(k).view(sz_b, len_k, n_head, d_k)
-        v = self.w_vs(v).view(sz_b, len_v, n_head, d_v)
+        bn, h, w, vn, c = embed.shape
+        residual = embed
+        q = self.w_qs(embed).view(bn, h, w, vn, n_head, d_k)
+        k = self.w_ks(embed).view(bn, h, w, vn, n_head, d_k)
+        v = self.w_vs(embed).view(bn, h, w, vn, n_head, d_k)
 
         # Transpose for attention dot product: b x n x lq x dv
-        q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
-        if mask is not None:
-            mask = mask.unsqueeze(1)  # For head axis broadcasting.
-
-        q, attn = self.attention(q, k, v, mask=mask)
+        q, k, v = q.transpose(-2, -3), k.transpose(-2, -3), v.transpose(-2, -3)
+        q, attn = self.attention(q, k, v)
 
         # Transpose to move the head dimension back: b x lq x n x dv
         # Combine the last two dimensions to concatenate all the heads together: b x lq x (n*dv)
@@ -549,42 +542,49 @@ def fused_mean(x, weight, dim):
     return mean
 
 
-class BRDF_mlp(nn.Module):
+class MultiViewAggregation(nn.Module):
     def __init__(self, cfg):
+        super(MultiViewAggregation, self).__init__()
         self.cfg = cfg
-        super(BRDF_mlp, self).__init__()
-        activation_func = nn.ELU(inplace=True)
-        if cfg.BRDF.input_pbr_mlp == 'vector':
+        self.activation = nn.ELU(inplace=True)
+        if cfg.BRDF.aggregation.input == 'vector':
             input_ch = 3 + 3 + cfg.DL.SGNum * 7
-        elif cfg.BRDF.input_pbr_mlp == 'dot':
-            input_ch = 1 + cfg.DL.SGNum * 6
         else:
-            raise Exception('input_pbr_mlp error')
+            input_ch = 1 + cfg.DL.SGNum * 6
+        if cfg.BRDF.refine.use:
+            output_ch = 64
+        else:
+            output_ch = 4
+        self.net_type = cfg.BRDF.aggregation.type
 
-        self.pbr_mlp = nn.Sequential(nn.Linear(input_ch, 64), activation_func,
-                                     nn.Linear(64, 64), activation_func,
-                                     nn.Linear(64, 64), activation_func,
-                                     nn.Linear(64, 32), activation_func, )
+        if self.net_type == 'mlp':
+            hidden = cfg.BRDF.aggregation.hidden
+            self.pbr_mlp = nn.Sequential(nn.Linear(input_ch, hidden), self.activation,
+                                         nn.Linear(hidden, hidden), self.activation,
+                                         nn.Linear(hidden, hidden), self.activation,
+                                         nn.Linear(hidden, hidden), self.activation, )
 
-        self.perview_mlp = nn.Sequential(nn.Linear((cfg.BRDF.feature_dims + 3) * 3 + 32, 64), activation_func,
-                                         nn.Linear(64, 64), activation_func,
-                                         nn.Linear(64, 64), activation_func,
-                                         nn.Linear(64, 64), activation_func,
-                                         nn.Linear(64, 64), activation_func, )
-
-        self.perview_mlp.apply(weights_init)
-        self.pbr_mlp.apply(weights_init)
+            self.perview_mlp = nn.Sequential(nn.Linear((cfg.BRDF.feature.dims + 3) * 3 + hidden, hidden), self.activation,
+                                             nn.Linear(hidden, hidden), self.activation,
+                                             nn.Linear(hidden, hidden), self.activation,
+                                             nn.Linear(hidden, hidden), self.activation,
+                                             nn.Linear(hidden, output_ch))
+            self.perview_mlp.apply(weights_init)
+            self.pbr_mlp.apply(weights_init)
+        elif self.net_type == 'transformer':
+            num_head = cfg.BRDF.aggregation.num_head
+            key_dims = cfg.BRDF.aggregation.num_head
+            self.transformer = MultiHeadAttention(num_head, input_ch, key_dims, key_dims)
 
     def forward(self, rgb_feat, view_dir, proj_err, normal, DL):
         bn, h, w, num_views, _ = rgb_feat.shape
-        # GT weight
         weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
         weight = weight / (torch.sum(weight, dim=-2, keepdim=True) + TINY_NUMBER)
 
         DL = DL.reshape(bn, h, w, 1, self.cfg.DL.SGNum, 7)
         axis = DL[..., :3]
         DL_axis = axis / torch.clamp(torch.sqrt(torch.sum(axis * axis, dim=-1, keepdim=True)), min=1e-6)
-        if self.cfg.BRDF.input_pbr_mlp == 'vector':
+        if self.cfg.BRDF.aggregation.input == 'vector':
             DL[..., :3] = DL_axis
             DL = DL.reshape((bn, h, w, 1, -1))
             pbr_batch = torch.cat([torch.cat([normal, DL], dim=-1).expand(-1, -1, -1, num_views, -1), view_dir], dim=-1)
@@ -595,76 +595,25 @@ class BRDF_mlp(nn.Module):
             sharp = DL[..., 3:4].reshape((bn, h, w, 1, -1))
             intensity = DL[..., 4:].reshape((bn, h, w, 1, -1))
             pbr_batch = torch.cat([torch.cat([DLdotN, sharp, intensity], dim=-1).expand(-1, -1, -1, num_views, -1), hdotV, VdotN], dim=-1)
-        pbr_feature = self.pbr_mlp(pbr_batch)
 
-        mean, var = fused_mean_variance(rgb_feat, weight, dim=-2)
-        globalfeat = torch.cat([mean, var], dim=-1)
-        x = torch.cat([globalfeat.expand(-1, -1, -1, num_views, -1), rgb_feat, pbr_feature], dim=-1)
-        x = self.perview_mlp(x)
-        x = fused_mean(x, weight, dim=-2).squeeze(-2)
-        view_dir_var = torch.var(torch.cat([torch.arctan(view_dir[..., 1:2] / view_dir[..., :1]), torch.arccos(view_dir[..., 2:])], dim=-1),
-                                 dim=-2, unbiased=False)
-        weight_var = torch.var(weight, dim=-2, unbiased=False)
-        return torch.cat([x, view_dir_var, weight_var], dim=-1)
-
-
-class BRDF_transformer(nn.Module):
-    def __init__(self, cfg):
-        self.cfg = cfg
-        super(BRDF_transformer, self).__init__()
-        activation_func = nn.ELU(inplace=True)
-        if cfg.BRDF.input_pbr_mlp == 'vector':
-            input_ch = 3 + 3 + cfg.DL.SGNum * 7
-        elif cfg.BRDF.input_pbr_mlp == 'dot':
-            input_ch = 1 + cfg.DL.SGNum * 6
+        if self.net_type == 'mlp':
+            pbr_feature = self.pbr_mlp(pbr_batch)
+            mean, var = fused_mean_variance(rgb_feat, weight, dim=-2)
+            globalfeat = torch.cat([mean, var], dim=-1)
+            x = torch.cat([globalfeat.expand(-1, -1, -1, num_views, -1), rgb_feat, pbr_feature], dim=-1)
+            x = self.perview_mlp(x)
+            x = fused_mean(x, weight, dim=-2).squeeze(-2)
+            if self.cfg.BRDF.refine.use:
+                x = self.activation(x)
+            else:
+                x = 0.5 * (torch.clamp(1.01 * torch.tanh(x), -1, 1) + 1)
+            # view_dir_var = torch.var(torch.cat([torch.arctan(view_dir[..., 1:2] / view_dir[..., :1]), torch.arccos(view_dir[..., 2:])], dim=-1),
+            #                          dim=-2, unbiased=False)
+            # weight_var = torch.var(weight, dim=-2, unbiased=False)
+            # return torch.cat([x, view_dir_var, weight_var], dim=-1)
         else:
-            raise Exception('input_pbr_mlp error')
-
-        self.pbr_mlp = nn.Sequential(nn.Linear(input_ch, 64), activation_func,
-                                     nn.Linear(64, 64), activation_func,
-                                     nn.Linear(64, 64), activation_func,
-                                     nn.Linear(64, 32), activation_func, )
-
-        self.perview_mlp = nn.Sequential(nn.Linear((cfg.BRDF.feature_dims + 3) * 3 + 32, 64), activation_func,
-                                         nn.Linear(64, 64), activation_func,
-                                         nn.Linear(64, 64), activation_func,
-                                         nn.Linear(64, 64), activation_func,
-                                         nn.Linear(64, 64), activation_func, )
-
-        self.perview_mlp.apply(weights_init)
-        self.pbr_mlp.apply(weights_init)
-
-    def forward(self, rgb_feat, view_dir, proj_err, normal, DL):
-        bn, h, w, num_views, _ = rgb_feat.shape
-        # GT weight
-        weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
-        weight = weight / (torch.sum(weight, dim=-2, keepdim=True) + TINY_NUMBER)
-
-        DL = DL.reshape(bn, h, w, 1, self.cfg.DL.SGNum, 7)
-        axis = DL[..., :3]
-        DL_axis = axis / torch.clamp(torch.sqrt(torch.sum(axis * axis, dim=-1, keepdim=True)), min=1e-6)
-        if self.cfg.BRDF.input_pbr_mlp == 'vector':
-            DL[..., :3] = DL_axis
-            DL = DL.reshape((bn, h, w, 1, -1))
-            pbr_batch = torch.cat([torch.cat([normal, DL], dim=-1).expand(-1, -1, -1, num_views, -1), view_dir], dim=-1)
-        else:
-            DLdotN = torch.sum(DL_axis * normal[:, :, :, :, None], dim=-1)
-            hdotV = (torch.sum(DL_axis * view_dir[:, :, :, :, None], dim=-1) + 1) / 2
-            VdotN = torch.sum(view_dir * normal, dim=-1, keepdim=True)
-            sharp = DL[..., 3:4].reshape((bn, h, w, 1, -1))
-            intensity = DL[..., 4:].reshape((bn, h, w, 1, -1))
-            pbr_batch = torch.cat([torch.cat([DLdotN, sharp, intensity], dim=-1).expand(-1, -1, -1, num_views, -1), hdotV, VdotN], dim=-1)
-        pbr_feature = self.pbr_mlp(pbr_batch)
-
-        mean, var = fused_mean_variance(rgb_feat, weight, dim=-2)
-        globalfeat = torch.cat([mean, var], dim=-1)
-        x = torch.cat([globalfeat.expand(-1, -1, -1, num_views, -1), rgb_feat, pbr_feature], dim=-1)
-        x = self.perview_mlp(x)
-        x = fused_mean(x, weight, dim=-2).squeeze(-2)
-        view_dir_var = torch.var(torch.cat([torch.arctan(view_dir[..., 1:2] / view_dir[..., :1]), torch.arccos(view_dir[..., 2:])], dim=-1),
-                                 dim=-2, unbiased=False)
-        weight_var = torch.var(weight, dim=-2, unbiased=False)
-        return torch.cat([x, view_dir_var, weight_var], dim=-1)
+            pbr_feature = self.transformer(pbr_batch)
+        return x
 
 
 import math
@@ -714,6 +663,3 @@ if __name__ == '__main__':
         layerInfos.append(currentLayer)
         printLayer(currentLayer, layer_names[i])
     print("------------------------")
-
-
-

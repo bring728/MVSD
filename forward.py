@@ -58,7 +58,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
         elif stage == '2':
             sample_view(data, 7 + np.random.choice(3, 1)[0])
             bn, vn, _, h, w = data['rgb'].shape
-            if cfg.BRDF.input_feature == 'rgbdc':
+            if cfg.BRDF.feature.input == 'rgbdc':
                 rgbdc = torch.cat([data['rgb'], data['depth_norm'], data['conf']], dim=2).reshape([bn * vn, 5, h, w])
                 featmaps = curr_model.feature_net(rgbdc)
             else:
@@ -74,19 +74,19 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_est'], data['rgb'],
                                                              featmaps)
             normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
-            DL_target = F.grid_sample(data['DL'], pixel_batch[..., 3:][None].expand([2, -1, -1, -1]), align_corners=False).permute(0, 2, 3, 1)[:, :, :, None]
-            brdf_feature = curr_model.brdf_net(rgb_feat, viewdir, proj_err, normal_pred, DL_target).permute(0, 3, 1, 2)
-            refine_input = torch.cat([data['depth_norm'][:, 0], data['conf'][:, 0], brdf_feature], dim=1)
-            if cfg.BRDF.refine_input == 'rgbdc':
-                refine_input = torch.cat([data['rgb'][:, 0], refine_input], dim=1)
-            brdf = curr_model.brdf_refine_net(refine_input)
+            DL_target = F.grid_sample(data['DL'], pixel_batch[..., 3:][None].expand([bn, -1, -1, -1]), align_corners=False).permute(0, 2, 3, 1)[:, :, :, None]
+            brdf = curr_model.brdf_net(rgb_feat, viewdir, proj_err, normal_pred, DL_target).permute(0, 3, 1, 2)
+            if cfg.BRDF.refine.use:
+                refine_input = torch.cat([data['depth_norm'][:, 0], data['conf'][:, 0], brdf], dim=1)
+                if cfg.BRDF.refine.input == 'rgbdc':
+                    refine_input = torch.cat([data['rgb'][:, 0], refine_input], dim=1)
+                brdf = curr_model.brdf_refine_net(refine_input)
 
-            # brdf = brdf.reshape(4, cfg.imHeight, cfg.imWidth)
             segBRDF = data['mask'][:, :1]
             albedo_pred = brdf[:, :3]
             rough_pred = brdf[:, 3:4]
             pred['rough'] = rough_pred
-            if cfg.BRDF.conf:
+            if cfg.BRDF.conf.use:
                 conf_pred = brdf[:, 4:]
                 pred['conf'] = conf_pred
                 if cfg.confloss == 'linear':
@@ -97,7 +97,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             else:
                 conf_pred = None
                 conf_loss = 0.0
-                pred['conf'] = torch.zeros_like(rough_pred)
+                pred['conf'] = torch.ones_like(rough_pred)
 
             albedo_pred_scaled = LSregress(albedo_pred.detach() * segBRDF, data['albedo_gt'] * segBRDF, albedo_pred)
             albedo_pred_scaled = torch.clamp(albedo_pred_scaled, 0, 1)
@@ -108,7 +108,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
 
             scalars_to_log['train/albedo_mse_err'] = albedo_mse_err.item()
             scalars_to_log['train/rough_mse_err'] = rough_mse_err.item()
-            total_loss = cfg.lambda_albedo * albedo_mse_err + cfg.lambda_rough * rough_mse_err + cfg.lambda_conf * conf_loss
+            total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err + cfg.BRDF.lambda_rough * rough_mse_err + cfg.BRDF.lambda_conf * conf_loss
             scalars_to_log['train/total_loss'] = total_loss.item()
         else:
             raise Exception('stage error')

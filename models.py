@@ -264,20 +264,20 @@ class BRDFModel(object):
         # self.DL_net.load_state_dict(DL_ckpt['DL_net'])
 
         # create feature extraction network
-        self.feature_net = ResUNet(cfg).to(device)
-        if cfg.BRDF.net_type == 'mlp':
-            self.brdf_net = BRDF_mlp(cfg).to(device)
+        self.feature_net = ResUNet(cfg.BRDF.feature).to(device)
+        self.brdf_net = MultiViewAggregation(cfg).to(device)
+        if cfg.BRDF.refine.use:
+            self.brdf_refine_net = BRDFRefineNet(cfg.BRDF).to(device)
         else:
-            self.brdf_net = BRDF_transformer(cfg).to(device)
-        self.brdf_refine_net = BRDFRefineNet(cfg.BRDF).to(device)
+            self.brdf_refine_net = nn.Module()
 
         # count_parameters(self.feature_net)
 
         # optimizer and learning rate scheduler
         self.optimizer = torch.optim.Adam([
-            {'params': self.brdf_net.parameters(), 'lr': float(cfg.lr_mlp)},
-            {'params': self.feature_net.parameters(), 'lr': float(cfg.lr_feature)},
-            {'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.lr_refine)}])
+            {'params': self.brdf_net.parameters(), 'lr': float(cfg.BRDF.aggregation.lr)},
+            {'params': self.feature_net.parameters(), 'lr': float(cfg.BRDF.feature.lr)},
+            {'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.BRDF.refine.lr)}])
 
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=int(cfg.lrate_decay_steps),

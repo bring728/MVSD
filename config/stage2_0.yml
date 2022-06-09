@@ -1,13 +1,6 @@
 nepoch: 60
-batchsize: 2
+batchsize: 1
 num_workers: 10
-lr_feature: 1e-4
-lr_mlp: 1e-4
-lr_refine: 1e-4
-lambda_albedo: 3.0
-lambda_rough: 1.0
-lambda_conf: 0.2
-confloss: linear
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
 
@@ -16,23 +9,37 @@ normal:
 
 DL:
   norm_layer: batch
-  SGNum: 3
+  SGNum: 4
   env_height: 8
   env_width: 16
   env_rows: 30
   env_cols: 40
 
 BRDF:
-#  input_feature: rgb
-  input_feature: rgbdc
-  net_type: mlp
-#  input_pbr_mlp: vector
-  input_pbr_mlp: dot
-  feature_dims: 24
-  norm_layer: group
-#  refine_input: dc
-  refine_input: rgbdc
-  conf: False
+  lambda_albedo: 3.0
+  lambda_rough: 1.0
+  lambda_conf: 0.2
+
+  feature:
+    input: rgbdc
+    dims: 24
+    lr: 1e-4
+
+  aggregation:
+    type: transformer
+    hidden: 64
+    input: dot
+    lr: 1e-4
+
+  refine:
+    use: False
+    input: rgbdc
+    lr: 1e-4
+    norm_layer: group
+
+  conf:
+    use: False
+    loss: linear
 
 GL:
   env_height: 8

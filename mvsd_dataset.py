@@ -7,6 +7,8 @@ from utils_geometry import *
 from utils_geometry import _34_to_44
 import scipy.ndimage as ndimage
 import os.path as osp
+
+
 # import six
 # import lmdb
 # from PIL import Image
@@ -68,7 +70,7 @@ class Openrooms_FF(Dataset):
         segObj = (seg > 0.9)
         if self.stage == '3':
             segObj = ndimage.binary_erosion(segObj.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
-        batchDict['mask'] = segObj # segBRDF
+        batchDict['mask'] = segObj  # segBRDF
 
         src_c2w_list = []
         src_int_list = []
@@ -85,20 +87,14 @@ class Openrooms_FF(Dataset):
             intrinsic = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=float)
             src_int_list.append(intrinsic)
             rgb_list.append(im)
-
-            depthest = loadBinary(name_list[idx].format('depthest', 'dat'))
-            depthest_list.append(depthest)
+            depthest_list.append(loadBinary(name_list[idx].format('depthest', 'dat')))
             conf_list.append(loadBinary(name_list[idx].format('conf', 'dat')))
-
-            if self.cfg.BRDF.input_feature == 'rgbdc':
-                depth_norm_list.append(loadBinary(name_list[idx].format('depthnorm', 'dat')))
+            depth_norm_list.append(loadBinary(name_list[idx].format('depthnorm', 'dat')))
 
         batchDict['rgb'] = np.stack(rgb_list, 0).astype(np.float32)
         batchDict['depth_est'] = np.stack(depthest_list, 0).astype(np.float32)
         batchDict['conf'] = np.stack(conf_list, 0).astype(np.float32)
-        if self.cfg.BRDF.input_feature == 'rgbdc':
-            batchDict['depth_norm'] = np.stack(depth_norm_list, 0).astype(np.float32)
-
+        batchDict['depth_norm'] = np.stack(depth_norm_list, 0).astype(np.float32)
         batchDict['cam'] = np.stack(src_int_list, 0).astype(np.float32)
         # recenter to cam_0
         w2target = np.linalg.inv(src_c2w_list[0])
@@ -122,8 +118,6 @@ class Openrooms_FF(Dataset):
             batchDict['envmaps_gt'] = envmaps.astype(np.float32)
             batchDict['envmapsInd'] = envmapsInd
         return batchDict
-
-
 
 
 class Openrooms_FF_single(Dataset):
@@ -191,9 +185,6 @@ class Openrooms_FF_single(Dataset):
             batchDict['envmapsInd'] = envmapsInd
 
         return batchDict
-
-
-
 
 # class Openrooms_LMDB_single(Dataset):
 #     def __init__(self, db_path, cfg, stage, gpu, lock):
