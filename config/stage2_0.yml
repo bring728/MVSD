@@ -22,12 +22,19 @@ BRDF:
 
   feature:
     input: rgbdc
-    dims: 24
+    dim: 24
     lr: 1e-4
 
   aggregation:
-    type: transformer
+#    type: mlp
     hidden: 64
+
+    type: transformer
+    num_depth: 2
+    num_head: 4
+    head_dim: 8
+    mlp_dim: 16
+    embed_dim: 64
     input: dot
     lr: 1e-4
 

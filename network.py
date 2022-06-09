@@ -16,6 +16,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp.autocast_mode import autocast
 from utils import TINY_NUMBER
+from einops import rearrange, repeat
 
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
@@ -178,10 +179,10 @@ class ResUNet(nn.Module):
         self.upconv3 = upconv(filters[2], 128, 3, 2)
         self.iconv3 = conv(filters[1] + 128, 128, 3, 1)
         self.upconv2 = upconv(128, 64, 3, 2)
-        self.iconv2 = conv(filters[0] + 64, cfg.dims, 3, 1)
+        self.iconv2 = conv(filters[0] + 64, cfg.dim, 3, 1)
 
         # fine-level conv
-        self.out_conv = nn.Conv2d(cfg.dims, cfg.dims, 1, 1)
+        self.out_conv = nn.Conv2d(cfg.dim, cfg.dim, 1, 1)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         norm_layer = self._norm_layer
@@ -432,6 +433,100 @@ class BRDFRefineNet(nn.Module):
         return x_out
 
 
+class PreNorm(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.fn = fn
+
+    def forward(self, x, **kwargs):
+        return self.fn(self.norm(x), **kwargs)
+
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, hidden_dim, dropout=0.):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class Attention(nn.Module):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
+        super().__init__()
+        inner_dim = dim_head * heads
+        project_out = not (heads == 1 and dim_head == dim)
+
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+
+        self.attend = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(dropout)
+
+        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, dim),
+            nn.Dropout(dropout)
+        ) if project_out else nn.Identity()
+
+    def forward(self, x):
+        qkv = self.to_qkv(x).chunk(3, dim=-1)
+        q, k, v = map(lambda t: rearrange(t, 'B H W n (h d) -> B H W h n d', h=self.heads), qkv)
+
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        attn = self.attend(dots)
+        attn = self.dropout(attn)
+
+        out = torch.matmul(attn, v)
+        out = rearrange(out, 'B H W h n d -> B H W n (h d)')
+        return self.to_out(out)
+
+
+class Transformer(nn.Module):
+    def __init__(self, input_dim, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
+        super().__init__()
+        self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
+        self.dropout = nn.Dropout(dropout)
+        self.to_latent = nn.Identity()
+
+        self.preprocess = nn.Linear(input_dim, dim)
+        self.layers = nn.ModuleList([])
+        for _ in range(depth):
+            self.layers.append(nn.ModuleList([
+                PreNorm(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNorm(dim, FeedForward(dim, mlp_dim, dropout=dropout))
+            ]))
+
+        self.mlp_head = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, 4)
+        )
+
+    def forward(self, x):
+        b, h, w, n, _ = x.shape
+        x = self.preprocess(x)
+        cls_tokens = repeat(self.cls_token, '1 n d -> b h w n d', b=b, h=h, w=w)
+        x = torch.cat((cls_tokens, x), dim=-2)
+        x = self.dropout(x)
+
+        for attn, ff in self.layers:
+            x = attn(x) + x
+            x = ff(x) + x
+
+        x = x[:, 0]
+        x = self.to_latent(x)
+        x = self.mlp_head(x)
+        return x
+
+
 class ScaledDotProductAttention(nn.Module):
     ''' Scaled Dot-Product Attention '''
 
@@ -440,10 +535,9 @@ class ScaledDotProductAttention(nn.Module):
         self.temperature = temperature
 
     def forward(self, q, k, v):
-        attn = torch.matmul(q / self.temperature, k.transpose(2, 3))
+        attn = torch.matmul(q / self.temperature, k.transpose(-1, -2))
         attn = F.softmax(attn, dim=-1)
         output = torch.matmul(attn, v)
-
         return output, attn
 
 
@@ -476,6 +570,7 @@ class MultiHeadAttention(nn.Module):
         self.d_k = d_k
         self.d_v = d_v
 
+        self.cls_token = nn.Parameter(torch.rand(1, 1, d_model))
         self.w_qs = nn.Linear(d_model, n_head * d_k, bias=False)
         self.w_ks = nn.Linear(d_model, n_head * d_k, bias=False)
         self.w_vs = nn.Linear(d_model, n_head * d_v, bias=False)
@@ -497,15 +592,11 @@ class MultiHeadAttention(nn.Module):
         q, k, v = q.transpose(-2, -3), k.transpose(-2, -3), v.transpose(-2, -3)
         q, attn = self.attention(q, k, v)
 
-        # Transpose to move the head dimension back: b x lq x n x dv
-        # Combine the last two dimensions to concatenate all the heads together: b x lq x (n*dv)
-        q = q.transpose(1, 2).contiguous().view(sz_b, len_q, -1)
+        q = q.transpose(-2, -3).contiguous().view(bn, h, w, vn, -1)
         # q = self.dropout(self.fc(q))
         q = self.fc(q)
         q += residual
-
         q = self.layer_norm(q)
-
         return q, attn
 
 
@@ -564,7 +655,7 @@ class MultiViewAggregation(nn.Module):
                                          nn.Linear(hidden, hidden), self.activation,
                                          nn.Linear(hidden, hidden), self.activation, )
 
-            self.perview_mlp = nn.Sequential(nn.Linear((cfg.BRDF.feature.dims + 3) * 3 + hidden, hidden), self.activation,
+            self.perview_mlp = nn.Sequential(nn.Linear((cfg.BRDF.feature.dim + 3) * 3 + hidden, hidden), self.activation,
                                              nn.Linear(hidden, hidden), self.activation,
                                              nn.Linear(hidden, hidden), self.activation,
                                              nn.Linear(hidden, hidden), self.activation,
@@ -572,9 +663,9 @@ class MultiViewAggregation(nn.Module):
             self.perview_mlp.apply(weights_init)
             self.pbr_mlp.apply(weights_init)
         elif self.net_type == 'transformer':
-            num_head = cfg.BRDF.aggregation.num_head
-            key_dims = cfg.BRDF.aggregation.num_head
-            self.transformer = MultiHeadAttention(num_head, input_ch, key_dims, key_dims)
+            input_ch += (cfg.BRDF.feature.dim + 3 + 1) # feature, rgb, weight
+            self.transformer = Transformer(input_ch, cfg.BRDF.aggregation.embed_dim, cfg.BRDF.aggregation.num_depth, cfg.BRDF.aggregation.num_head,
+                                           cfg.BRDF.aggregation.head_dim, cfg.BRDF.aggregation.mlp_dim)
 
     def forward(self, rgb_feat, view_dir, proj_err, normal, DL):
         bn, h, w, num_views, _ = rgb_feat.shape
@@ -612,7 +703,9 @@ class MultiViewAggregation(nn.Module):
             # weight_var = torch.var(weight, dim=-2, unbiased=False)
             # return torch.cat([x, view_dir_var, weight_var], dim=-1)
         else:
-            pbr_feature = self.transformer(pbr_batch)
+            rgb_pbr = torch.cat([rgb_feat, pbr_batch, weight], dim=-1)
+            x = self.transformer(rgb_pbr)
+            x = 0.5 * (torch.clamp(1.01 * torch.tanh(x), -1, 1) + 1)
         return x
 
 
