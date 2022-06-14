@@ -1,5 +1,3 @@
-import pylab
-#  import seaborn as sns
 from scipy.sparse import diags
 from scipy.sparse.linalg import cg
 

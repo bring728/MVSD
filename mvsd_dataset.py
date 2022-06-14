@@ -34,7 +34,6 @@ class Openrooms_FF(Dataset):
             sceneList = sceneList[:30]
         self.nameList = []
         self.matrixList = []
-
         for scene in sceneList:
             # self.nameList += [scene + '{}_' + f'{i + 1}' + '.{}' for i in idx_list]
             self.nameList += [scene + '$' + i for i in self.idx_list]
@@ -97,10 +96,10 @@ class Openrooms_FF(Dataset):
         w2target = np.linalg.inv(src_c2w_list[0])
         batchDict['c2w'] = (w2target @ np.stack(src_c2w_list, 0)).astype(np.float32)
 
-        normal_est = loadH5(name_list[0].format('normalest', 'h5'))
-        batchDict['normal'] = normal_est
-        DL = loadH5(name_list[0].format('DLest', 'h5'))
-        batchDict['DL'] = DL
+        # normal_est = loadH5(name_list[0].format('normalest', 'h5'))
+        # batchDict['normal'] = normal_est
+        # DL = loadH5(name_list[0].format('DLest', 'h5'))
+        # batchDict['DL'] = DL
 
         if self.stage == '2':
             albedo = loadImage(name_list[0].format('imbaseColor', 'png'))
@@ -123,6 +122,8 @@ class Openrooms_FF_single(Dataset):
         self.cfg = cfg
         self.stage = stage
         self.phase = phase
+        self.idx_list = list(range(1, cfg.num_view_all + 1))
+        self.idx_list = list(map(str, self.idx_list))
 
         if phase == 'TRAIN':
             sceneFile = osp.join(dataRoot, 'train.txt')
@@ -136,19 +137,23 @@ class Openrooms_FF_single(Dataset):
         sceneList = [a.strip() for a in sceneList]
 
         self.nameList = []
-        idx_list = list(range(self.cfg.num_view_all))
         for scene in sceneList:
-            self.nameList += [scene + '{}_' + f'{i + 1}' + '.{}' for i in idx_list]
+            # self.nameList += [scene + '{}_' + f'{i + 1}' + '.{}' for i in idx_list]
+            self.nameList += [scene + '$' + i for i in self.idx_list]
         # self.nameList = np.array(self.nameList).astype(np.string_)
-
         self.length = len(self.nameList)
 
     def __len__(self):
         return self.length
 
     def __getitem__(self, ind):
+        scene, target_idx = self.nameList[ind].split('$')
+        scene = osp.join(self.dataRoot, scene)
+        cam_mats = np.load(scene + 'cam_mats.npy')
+        max_depth = cam_mats[1, -1, int(target_idx) - 1]
+
         batchDict = {}
-        name = osp.join(self.dataRoot, self.nameList[ind])
+        name = osp.join(scene + '{}_' + target_idx + '.{}')
         # name = osp.join(self.dataRoot, str(self.nameList[ind], encoding='utf-8'))
         batchDict['name'] = name
         im = loadHdr(name.format('im', 'rgbe'))
@@ -164,16 +169,17 @@ class Openrooms_FF_single(Dataset):
         batchDict['mask'] = seg
 
         conf = loadBinary(name.format('conf', 'dat'))
-        depthmvs_normalized = loadBinary(name.format('depthnorm', 'dat'))
-        input_data = np.concatenate([im, depthmvs_normalized, conf], axis=0).astype(np.float32)
+        depthest = loadBinary(name.format('depthest', 'dat'))
+        depth_norm = np.clip(depthest / max_depth, 0, 1)
+        input_data = np.concatenate([im, depth_norm, conf], axis=0).astype(np.float32)
         batchDict['input'] = input_data
 
         if self.stage == '1-1':
             normal = loadImage(name.format('imnormal', 'png'), normalize_01=False)
-            normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0), 1e-5))[np.newaxis, :]).astype(np.float32)
+            normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0, keepdims=True), 1e-5))).astype(np.float32)
             batchDict['normal_gt'] = normal
 
-        if self.stage == '1-2':
+        elif self.stage == '1-2':
             envmaps, envmapsInd = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
                                              self.cfg.DL.env_rows,
                                              self.cfg.DL.env_cols)

@@ -1,15 +1,9 @@
 import torch
-import argparse
 import numpy as np
 from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
-from torchvision import datasets
-import sys
-import BilateralGrid as bs
+from CIS import BilateralGrid as bs
 
 
 ##############################################################################

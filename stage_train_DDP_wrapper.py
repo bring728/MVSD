@@ -6,12 +6,11 @@ from stage_output import output_stage_func
 
 # import imageio
 # imageio.plugins.freeimage.download()
-torch.backends.cudnn.benchmark = False
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         num_gpu = 4
-        config = 'stage2_0.yml'
+        config = 'stage1-1_0.yml'
     else:
         num_gpu = int(sys.argv[1])
         config = sys.argv[2]
