@@ -1,5 +1,5 @@
-nepoch: 60
-batchsize: 1
+nepoch: 40
+batchsize: 2
 num_workers: 10
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
@@ -9,7 +9,7 @@ normal:
 
 DL:
   norm_layer: batch
-  SGNum: 4
+  SGNum: 3
   env_height: 8
   env_width: 16
   env_rows: 30
@@ -22,24 +22,25 @@ BRDF:
 
   feature:
     input: rgbdc
-    dim: 24
+    dim: 16
     lr: 1e-4
 
   aggregation:
 #    type: mlp
-    hidden: 64
+    pbr_hidden: 64
+    input: dot
+    pbr_feature_dim: 16
 
     type: transformer
-    num_depth: 2
-    num_head: 4
-    head_dim: 8
-    mlp_dim: 16
-    embed_dim: 64
-    input: dot
+    num_depth: 3
+    num_head: 1
+    head_dim: 16
+    mlp_hidden: 16
+    final_hidden: 64
     lr: 1e-4
 
   refine:
-    use: False
+    use: True
     input: rgbdc
     lr: 1e-4
     norm_layer: group

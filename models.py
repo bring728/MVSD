@@ -267,9 +267,9 @@ class BRDFModel(object):
         self.feature_net = ResUNet(cfg.BRDF.feature).to(device)
         self.brdf_net = MultiViewAggregation(cfg).to(device)
         if cfg.BRDF.refine.use:
-            self.brdf_refine_net = BRDFRefineNet(cfg.BRDF).to(device)
+            self.brdf_refine_net = BRDFRefineNet(cfg).to(device)
         else:
-            self.brdf_refine_net = nn.Module()
+            self.brdf_refine_net = nn.Linear(1, 1).to(device)
 
         # count_parameters(self.feature_net)
 

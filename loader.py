@@ -73,8 +73,8 @@ def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag):
     train_sampler = None
     if is_DDP:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    is_shuffle = not is_DDP and not debug
-    # is_shuffle = not is_DDP
+    # is_shuffle = not is_DDP and not debug
+    is_shuffle = not is_DDP
     # is_shuffle = False
     train_loader = DataLoader(train_dataset, batch_size=batch_per_gpu, shuffle=is_shuffle, num_workers=worker_per_gpu,
                               pin_memory=cfg.pinned, sampler=train_sampler)

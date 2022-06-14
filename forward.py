@@ -1,4 +1,5 @@
 import torch
+import cv2
 from utils import *
 import torch.nn.functional as F
 from collections import OrderedDict
@@ -74,8 +75,9 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_est'], data['rgb'],
                                                              featmaps)
             normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
-            DL_target = F.grid_sample(data['DL'], pixel_batch[..., 3:][None].expand([bn, -1, -1, -1]), align_corners=False).permute(0, 2, 3, 1)[:, :, :, None]
-            brdf = curr_model.brdf_net(rgb_feat, viewdir, proj_err, normal_pred, DL_target).permute(0, 3, 1, 2)
+            DL_target = F.grid_sample(data['DL'], pixel_batch[..., 3:][None].expand([bn, -1, -1, -1]), align_corners=False)
+
+            brdf = curr_model.brdf_net(rgb_feat, viewdir, proj_err, normal_pred, DL_target.permute(0, 2, 3, 1)[:, :, :, None]).permute(0, 3, 1, 2)
             if cfg.BRDF.refine.use:
                 refine_input = torch.cat([data['depth_norm'][:, 0], data['conf'][:, 0], brdf], dim=1)
                 if cfg.BRDF.refine.input == 'rgbdc':
@@ -119,7 +121,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
 def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list, featmaps):
     bn, vn, _, h, w = depth_list.shape
     w2c_list = torch.inverse(c2w_list)
-    pixel_depth = depth_list[:, 0, 0][..., None, None]
+    pixel_depth = depth_list[:, 0, 0, ..., None, None]
 
     cam_coord = pixel_depth * torch.inverse(int_list[:, None, None, 0]) @ pixel_batch[None, :, :, :3, None]
     # because cam_0 is world
@@ -133,13 +135,37 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list, fea
 
     resize_factor = torch.tensor([w, h]).to(pixel_coord_k_est.device)[None, None, None, None, :]
     pixel_coord_k_norm = (2 * pixel_coord_k_est / resize_factor - 1.).reshape([bn * vn, h, w, 2])
-    pixel_rgbd_k = F.grid_sample(torch.cat([im_list, depth_list], dim=2).reshape([bn * vn, 4, h, w]), pixel_coord_k_norm, align_corners=False).reshape([bn, vn, 4, h, w])
+    pixel_rgbd_k = F.grid_sample(torch.cat([im_list, depth_list], dim=2).reshape([bn * vn, 4, h, w]), pixel_coord_k_norm,
+                                 align_corners=False, mode='nearest').reshape([bn, vn, 4, h, w])
     proj_err = pixel_depth_k_est - pixel_rgbd_k[:, :, -1, ..., None]
+    # print(torch.mean(torch.abs(pixel_rgbd_k[0,0, -1] - depth_list[0, 0, 0])))
+    # print(torch.mean(torch.abs(pixel_rgbd_k[0, 0, :3] - im_list[0, 0, :])))
 
     rgb_sampled = pixel_rgbd_k[:, :, :3]
     feat_sampled = F.grid_sample(featmaps, pixel_coord_k_norm, align_corners=False).reshape([bn, vn, -1, h, w])
     rgb_feat_sampled = torch.cat([rgb_sampled, feat_sampled], dim=2).permute(0, 3, 4, 1, 2)
     viewdir = F.normalize((c2w_list[:, :, None, None, :3, :3] @ cam_coord_k)[..., 0], dim=-1)
+    # weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
+    # weight = weight / (torch.sum(weight, dim=1, keepdim=True) + TINY_NUMBER)
+    # while True:
+    #     h = np.random.randint(0, 480)
+    #     w = np.random.randint(0, 640)
+    #     print(weight[0, :4, h, w, 0])
+    #     coord = pixel_coord_k_est[0, :4, h, w]
+    #     rgb_list = []
+    #     rgb = (im_list[0].permute(0, 2, 3, 1).detach().cpu().numpy() * 255.0).astype(np.uint8).copy()
+    #     rgb1 = cv2.circle(rgb[0], (int(coord[0, 0]), int(coord[0, 1])), 5, (255, 255, 0), -1)
+    #     rgb2 = cv2.circle(rgb[1], (int(coord[1, 0]), int(coord[1, 1])), 5, (255, 255, 0), -1)
+    #     rgb3 = cv2.circle(rgb[2], (int(coord[2, 0]), int(coord[2, 1])), 5, (255, 255, 0), -1)
+    #     rgb4 = cv2.circle(rgb[3], (int(coord[3, 0]), int(coord[3, 1])), 5, (255, 255, 0), -1)
+    #     rgb_list.append(rgb1)
+    #     rgb_list.append(rgb2)
+    #     rgb_list.append(rgb3)
+    #     rgb_list.append(rgb4)
+    #     rgb = cv2.hconcat(rgb_list)
+    #     rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+    #     cv2.imshow('asd', rgb)
+    #     cv2.waitKey(0)
     return rgb_feat_sampled, viewdir.permute(0, 2, 3, 1, 4), proj_err.permute(0, 2, 3, 1, 4)
 
 
