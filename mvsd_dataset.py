@@ -7,14 +7,16 @@ from utils_geometry import *
 from utils_geometry import _34_to_44
 import scipy.ndimage as ndimage
 import os.path as osp
-import six
-import lmdb
-from PIL import Image
-import pyarrow as pa
-import pickle
+
+
+# import six
+# import lmdb
+# from PIL import Image
+# import pyarrow as pa
+# import pickle
 
 class Openrooms_FF(Dataset):
-    def __init__(self, dataRoot, cfg, stage, phase='TRAIN', debug=True):
+    def __init__(self, dataRoot, cfg, stage, phase='TRAIN', debug=False):
         self.num_view_min = cfg.num_view_min
         self.num_view_all = cfg.num_view_all
         self.range = self.num_view_all - self.num_view_min + 1
@@ -23,13 +25,9 @@ class Openrooms_FF(Dataset):
         self.stage = stage
         self.phase = phase
 
-        if phase == 'TRAIN' and debug:
-            sceneFile = osp.join(dataRoot, 'train_debug.txt')
-        elif phase == 'TEST' and debug:
-            sceneFile = osp.join(dataRoot, 'test_debug.txt')
-        elif phase == 'TRAIN' and not debug:
+        if phase == 'TRAIN':
             sceneFile = osp.join(dataRoot, 'train.txt')
-        elif phase == 'TEST' and not debug:
+        elif phase == 'TEST':
             sceneFile = osp.join(dataRoot, 'test.txt')
         else:
             raise Exception('Unrecognized phase for data loader')
@@ -37,7 +35,8 @@ class Openrooms_FF(Dataset):
         with open(sceneFile, 'r') as fIn:
             sceneList = fIn.readlines()
         sceneList = [a.strip() for a in sceneList]
-        # sceneList = ['mainDiffLight_xml1/scene0107_00/18_', ]
+        if debug:
+            sceneList = sceneList[:30]
         self.nameList = []
         self.matrixList = []
 
@@ -56,35 +55,26 @@ class Openrooms_FF(Dataset):
         name_list = [osp.join(self.dataRoot, a) for a in self.nameList[ind]]
         batchDict['name'] = name_list[0]
 
-        num_view = self.num_view_min + np.random.choice(self.range, 1)[0]
-        # num_view = self.num_view_all
+        # num_view = self.num_view_min + np.random.choice(self.range, 1)[0]
+        num_view = self.num_view_all
         training_pair_idx = np.random.choice(self.num_view_all, num_view, replace=False)
         target_idx = training_pair_idx[0]
 
-        if self.cfg.depth_gt:
-            target_depth_norm = loadBinary(name_list[target_idx].format('imdepth', 'dat')).astype(np.float32)
-            batchDict['target_depth_norm'] = target_depth_norm / target_depth_norm.max()
-        else:
-            target_depth_norm = loadBinary(name_list[target_idx].format('depthestnorm', 'dat')).astype(np.float32)
-            batchDict['target_depth_norm'] = target_depth_norm
+        # target_depth_norm = loadBinary(name_list[target_idx].format('depthnorm', 'dat')).astype(np.float32)
+        # batchDict['target_depth_norm'] = target_depth_norm
 
         target_im = loadHdr(name_list[target_idx].format('im', 'rgbe'))
         seg = loadImage(name_list[target_idx].format('immask', 'png'))[0:1, :, :]
         scene_scale = get_hdr_scale(target_im, seg, self.phase)
 
-        segArea = np.logical_and(seg > 0.49, seg < 0.51)
         segObj = (seg > 0.9)
         if self.stage == '3':
             segObj = ndimage.binary_erosion(segObj.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
-            seg = np.concatenate([segObj, segArea + segObj], axis=0).astype(np.float32)  # segBRDF, segAll
-        else:
-            seg = np.concatenate([segObj, segArea + segObj], axis=0).astype(np.float32)  # segBRDF, segAll
-        batchDict['mask'] = seg
+        batchDict['mask'] = segObj  # segBRDF
 
         src_c2w_list = []
         src_int_list = []
         rgb_list = []
-        depth_list = []
         depthest_list = []
         conf_list = []
         depth_norm_list = []
@@ -97,34 +87,23 @@ class Openrooms_FF(Dataset):
             intrinsic = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=float)
             src_int_list.append(intrinsic)
             rgb_list.append(im)
-
-            depth = loadBinary(name_list[idx].format('imdepth', 'dat'))
-            depth_list.append(depth)
-
-            depthest = loadBinary(name_list[idx].format('depthest', 'dat'))
-            depthest_list.append(depthest)
+            depthest_list.append(loadBinary(name_list[idx].format('depthest', 'dat')))
             conf_list.append(loadBinary(name_list[idx].format('conf', 'dat')))
-
-            if self.cfg.BRDF.input_feature == 'rgbdc':
-                depth_norm_list.append(loadBinary(name_list[idx].format('depthestnorm', 'dat')))
+            depth_norm_list.append(loadBinary(name_list[idx].format('depthnorm', 'dat')))
 
         batchDict['rgb'] = np.stack(rgb_list, 0).astype(np.float32)
-        batchDict['depth'] = np.stack(depth_list, 0).astype(np.float32)
-        batchDict['depthest'] = np.stack(depthest_list, 0).astype(np.float32)
-
+        batchDict['depth_est'] = np.stack(depthest_list, 0).astype(np.float32)
         batchDict['conf'] = np.stack(conf_list, 0).astype(np.float32)
-        if self.cfg.BRDF.input_feature == 'rgbdc':
-            batchDict['depth_norm'] = np.stack(depth_norm_list, 0).astype(np.float32)
-
+        batchDict['depth_norm'] = np.stack(depth_norm_list, 0).astype(np.float32)
         batchDict['cam'] = np.stack(src_int_list, 0).astype(np.float32)
         # recenter to cam_0
         w2target = np.linalg.inv(src_c2w_list[0])
         batchDict['c2w'] = (w2target @ np.stack(src_c2w_list, 0)).astype(np.float32)
 
-        # normal_est = loadH5(name_list[target_idx].format('normalest', 'h5'))
-        # batchDict['normal'] = normal_est
-        # DL = loadH5(name_list[target_idx].format('DLest', 'h5'))
-        # batchDict['DL'] = DL
+        normal_est = loadH5(name_list[target_idx].format('normalest', 'h5'))
+        batchDict['normal'] = normal_est
+        DL = loadH5(name_list[target_idx].format('DLest', 'h5'))
+        batchDict['DL'] = DL
 
         if self.stage == '2':
             albedo = loadImage(name_list[target_idx].format('imbaseColor', 'png'))
@@ -141,23 +120,16 @@ class Openrooms_FF(Dataset):
         return batchDict
 
 
-
-
 class Openrooms_FF_single(Dataset):
-    def __init__(self, dataRoot, cfg, stage, phase='TRAIN', debug=True, gpu=0):
-        self.gpu = gpu
+    def __init__(self, dataRoot, cfg, stage, phase='TRAIN'):
         self.dataRoot = dataRoot
         self.cfg = cfg
         self.stage = stage
         self.phase = phase
 
-        if phase == 'TRAIN' and debug:
-            sceneFile = osp.join(dataRoot, 'train_debug.txt')
-        elif phase == 'TEST' and debug:
-            sceneFile = osp.join(dataRoot, 'test_debug.txt')
-        elif phase == 'TRAIN' and not debug:
+        if phase == 'TRAIN':
             sceneFile = osp.join(dataRoot, 'train.txt')
-        elif phase == 'TEST' and not debug:
+        elif phase == 'TEST':
             sceneFile = osp.join(dataRoot, 'test.txt')
         else:
             raise Exception('Unrecognized phase for data loader')
@@ -213,9 +185,6 @@ class Openrooms_FF_single(Dataset):
             batchDict['envmapsInd'] = envmapsInd
 
         return batchDict
-
-
-
 
 # class Openrooms_LMDB_single(Dataset):
 #     def __init__(self, db_path, cfg, stage, gpu, lock):

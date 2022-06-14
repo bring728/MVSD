@@ -8,8 +8,7 @@ from utils import *
 from loader import load_id_wandb, load_dataloader, load_model
 import os
 
-root = '/new_disk/happily/Data'
-
+root = '/home/happily/Data'
 
 def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume=False):
     if debug:
@@ -31,7 +30,7 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
 
     scaler = torch.cuda.amp.GradScaler()
     curr_model, helper_dict = load_model(stage, cfg, gpu, experiment, phase=phase, is_DDP=is_DDP, wandb_obj=wandb_obj)
-    train_loader, val_loader, train_sampler = load_dataloader(stage, dataRoot, cfg, debug, is_DDP, gpu, num_gpu, record_flag)
+    train_loader, val_loader, train_sampler = load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag)
 
     global_step = curr_model.start_step
 
@@ -46,8 +45,6 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
             train_sampler.set_epoch(epoch)
         for train_data in train_loader:
             global_step += 1
-            # print_state(exp_name, start_time, max_iterations, global_step, gpu)
-            # continue
             save_image_flag = global_step % i_img == 1
             train_data = tocuda(train_data, gpu, cfg.pinned)
             total_loss, pred = model_forward(stage, phase, curr_model, helper_dict, train_data, cfg, scalars_to_log, save_image_flag)
@@ -90,4 +87,4 @@ if __name__ == "__main__":
     phase = 'TRAIN'
     is_DDP = False
     resume = False
-    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1-2_0.yml', is_DDP=is_DDP, resume=resume)
+    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage2_0.yml', is_DDP=is_DDP, resume=resume)

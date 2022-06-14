@@ -11,11 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import cv2
+import einops
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp.autocast_mode import autocast
-from cfgnode import CfgNode
+from utils import *
+from einops import rearrange
 
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
@@ -160,7 +163,7 @@ class ResUNet(nn.Module):
         self.inplanes = 64
         self.groups = 1
         self.base_width = 64
-        if cfg.BRDF.input_feature == 'rgb':
+        if cfg.input == 'rgb':
             self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
                                    bias=False, padding_mode='reflect')
         else:
@@ -178,10 +181,10 @@ class ResUNet(nn.Module):
         self.upconv3 = upconv(filters[2], 128, 3, 2)
         self.iconv3 = conv(filters[1] + 128, 128, 3, 1)
         self.upconv2 = upconv(128, 64, 3, 2)
-        self.iconv2 = conv(filters[0] + 64, cfg.BRDF.feature_dims, 3, 1)
+        self.iconv2 = conv(filters[0] + 64, cfg.dim, 3, 1)
 
         # fine-level conv
-        self.out_conv = nn.Conv2d(cfg.BRDF.feature_dims, cfg.BRDF.feature_dims, 1, 1)
+        self.out_conv = nn.Conv2d(cfg.dim, cfg.dim, 1, 1)
 
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False):
         norm_layer = self._norm_layer
@@ -390,25 +393,225 @@ class DirectLightingNet(nn.Module):
         return axis, sharp, intensity, vis
 
 
+class PreNorm(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.fn = fn
+
+    def forward(self, x, **kwargs):
+        return self.fn(self.norm(x), **kwargs)
+
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, hidden_dim, dropout=0.):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class Attention(nn.Module):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
+        super().__init__()
+        inner_dim = dim_head * heads
+        project_out = not (heads == 1 and dim_head == dim)
+
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+
+        self.attend = nn.Softmax(dim=-1)
+        self.dropout = nn.Dropout(dropout)
+
+        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, dim),
+            nn.Dropout(dropout)
+        ) if project_out else nn.Identity()
+
+    def forward(self, x, **kwargs):
+        qkv = self.to_qkv(x).chunk(3, dim=-1)
+        q, k, v = map(lambda t: rearrange(t, 'B H W n (h d) -> B H W h n d', h=self.heads), qkv)
+
+        dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        dots = dots * kwargs['mask']
+        attn = self.attend(dots)
+        attn = self.dropout(attn)
+
+        out = torch.matmul(attn, v)
+        out = rearrange(out, 'B H W h n d -> B H W n (h d)')
+        return self.to_out(out)
+
+
+class Visible_Attention(nn.Module):
+    def __init__(self, dim, dim_head=64, dropout=0.):
+        super().__init__()
+        self.to_v = nn.Linear(dim, dim_head, bias=False)
+        self.to_out = nn.Linear(dim_head, dim)
+
+    def forward(self, x, **kwargs):
+        v = self.to_v(x)
+        out = torch.matmul(kwargs['mask'], v)
+        out = self.to_out(out)
+        return out
+
+
+class Transformer(nn.Module):
+    def __init__(self, dim, depth, heads, dim_head, mlp_hidden, final_hidden, dropout=0.):
+        super().__init__()
+        self.layers = nn.ModuleList([])
+        for _ in range(depth):
+            self.layers.append(nn.ModuleList([
+                PreNorm(dim, Visible_Attention(dim, dim_head=dim_head, dropout=dropout)),
+                PreNorm(dim, FeedForward(dim, mlp_hidden, dropout=dropout))
+            ]))
+
+        self.mlp_final = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, final_hidden),
+            nn.GELU(),
+            nn.Linear(final_hidden, final_hidden),
+            nn.GELU(),
+            nn.Linear(final_hidden, final_hidden),
+            nn.ReLU()
+        )
+
+    def forward(self, x, weight):
+        b, h, w, n, _ = x.shape
+        weight = weight.transpose(-1, -2).expand(-1, -1, -1, n, -1)
+        for attn, ff in self.layers:
+            x = attn(x, mask=weight) + x
+            x = ff(x) + x
+
+        x = x[..., 0, :]
+        x = self.mlp_final(x)
+        return x
+
+
+# default tensorflow initialization of linear layers
+def weights_init(m):
+    if isinstance(m, nn.Linear):
+        nn.init.kaiming_normal_(m.weight.data)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias.data)
+
+
+def fused_mean_variance(x, weight, dim):
+    mean = torch.sum(x * weight, dim=dim, keepdim=True)
+    var = torch.sum(weight * (x - mean) ** 2, dim=dim, keepdim=True)
+    return mean, var
+
+
+def fused_mean(x, weight, dim):
+    mean = torch.sum(x * weight, dim=dim, keepdim=True)
+    return mean
+
+
+class MultiViewAggregation(nn.Module):
+    def __init__(self, cfg):
+        super(MultiViewAggregation, self).__init__()
+        self.cfg = cfg
+        self.activation = nn.ELU(inplace=True)
+        if cfg.BRDF.aggregation.input == 'vector':
+            input_ch = 3 + 3 + cfg.DL.SGNum * 7
+        else:
+            input_ch = 1 + cfg.DL.SGNum * 6
+        if cfg.BRDF.refine.use:
+            output_ch = 64
+        else:
+            output_ch = 4
+        self.net_type = cfg.BRDF.aggregation.type
+        hidden = cfg.BRDF.aggregation.pbr_hidden
+        self.pbr_mlp = nn.Sequential(nn.Linear(input_ch, hidden), self.activation,
+                                     nn.Linear(hidden, hidden), self.activation,
+                                     nn.Linear(hidden, hidden), self.activation,
+                                     nn.Linear(hidden, cfg.BRDF.aggregation.pbr_feature_dim), self.activation, )
+        self.pbr_mlp.apply(weights_init)
+        if self.net_type == 'mlp':
+            self.perview_mlp = nn.Sequential(nn.Linear((cfg.BRDF.feature.dim + 3) * 3 + hidden, hidden), self.activation,
+                                             nn.Linear(hidden, hidden), self.activation,
+                                             nn.Linear(hidden, hidden), self.activation,
+                                             nn.Linear(hidden, hidden), self.activation,
+                                             nn.Linear(hidden, output_ch))
+            self.perview_mlp.apply(weights_init)
+        elif self.net_type == 'transformer':
+            input_ch = cfg.BRDF.feature.dim + 3 + cfg.BRDF.aggregation.pbr_feature_dim
+            self.transformer = Transformer(input_ch, cfg.BRDF.aggregation.num_depth, cfg.BRDF.aggregation.num_head,
+                                           cfg.BRDF.aggregation.head_dim, cfg.BRDF.aggregation.mlp_hidden, cfg.BRDF.aggregation.final_hidden)
+
+    def forward(self, rgb_feat, view_dir, proj_err, normal, DL):
+        bn, h, w, num_views, _ = rgb_feat.shape
+        weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
+        weight = weight / (torch.sum(weight, dim=-2, keepdim=True) + TINY_NUMBER)
+
+        DL = DL.reshape(bn, h, w, 1, self.cfg.DL.SGNum, 7)
+        axis = DL[..., :3]
+        DL_axis = axis / torch.clamp(torch.sqrt(torch.sum(axis * axis, dim=-1, keepdim=True)), min=1e-6)
+        if self.cfg.BRDF.aggregation.input == 'vector':
+            DL[..., :3] = DL_axis
+            DL = DL.reshape((bn, h, w, 1, -1))
+            pbr_batch = torch.cat([torch.cat([normal, DL], dim=-1).expand(-1, -1, -1, num_views, -1), view_dir], dim=-1)
+        else:
+            DLdotN = torch.sum(DL_axis * normal[:, :, :, :, None], dim=-1)
+            hdotV = (torch.sum(DL_axis * view_dir[:, :, :, :, None], dim=-1) + 1) / 2
+            VdotN = torch.sum(view_dir * normal, dim=-1, keepdim=True)
+            sharp = DL[..., 3:4].reshape((bn, h, w, 1, -1))
+            intensity = DL[..., 4:].reshape((bn, h, w, 1, -1))
+            pbr_batch = torch.cat([torch.cat([DLdotN, sharp, intensity], dim=-1).expand(-1, -1, -1, num_views, -1), hdotV, VdotN], dim=-1)
+        pbr_feature = self.pbr_mlp(pbr_batch)
+
+        if self.net_type == 'mlp':
+            mean, var = fused_mean_variance(rgb_feat, weight, dim=-2)
+            globalfeat = torch.cat([mean, var], dim=-1)
+            x = torch.cat([globalfeat.expand(-1, -1, -1, num_views, -1), rgb_feat, pbr_feature], dim=-1)
+            x = self.perview_mlp(x)
+            x = fused_mean(x, weight, dim=-2).squeeze(-2)
+            if self.cfg.BRDF.refine.use:
+                x = self.activation(x)
+            else:
+                x = 0.5 * (torch.clamp(1.01 * torch.tanh(x), -1, 1) + 1)
+            # view_dir_var = torch.var(torch.cat([torch.arctan(view_dir[..., 1:2] / view_dir[..., :1]), torch.arccos(view_dir[..., 2:])], dim=-1),
+            #                          dim=-2, unbiased=False)
+            # weight_var = torch.var(weight, dim=-2, unbiased=False)
+            # return torch.cat([x, view_dir_var, weight_var], dim=-1)
+        else:
+            rgb_feat_pbr = torch.cat([rgb_feat, pbr_feature], dim=-1)
+            x = self.transformer(rgb_feat_pbr, weight)
+            x = 0.5 * (torch.clamp(1.01 * torch.tanh(x), -1, 1) + 1)
+        return x
+
+
 class BRDFRefineNet(nn.Module):
     def __init__(self, cfg):
         super(BRDFRefineNet, self).__init__()
-        if cfg.refine_input != 'dc':
-            self.refine_d_1 = make_layer(pad_type='rep', in_ch=37, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
+        input_ch = cfg.BRDF.aggregation.final_hidden + 5
+        norm_layer = cfg.BRDF.refine.norm_layer
+        self.refine_d_1 = make_layer(pad_type='rep', in_ch=input_ch, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=norm_layer)
+        self.refine_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=norm_layer)
+        self.refine_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
+        self.refine_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
+        self.refine_d_5 = make_layer(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=norm_layer)
+        self.refine_d_6 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
+
+        self.refine_u_1 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
+        self.refine_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
+        self.refine_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
+        self.refine_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=norm_layer)
+        self.refine_u_5 = make_layer(in_ch=256, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+        self.refine_u_6 = make_layer(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+
+        if cfg.BRDF.conf.use:
+            self.refine_final = make_layer(pad_type='rep', in_ch=64, out_ch=5, kernel=3, stride=1, act='None', norm_layer='None')
         else:
-            self.refine_d_1 = make_layer(pad_type='rep', in_ch=34, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
-        self.refine_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
-        self.refine_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
-        self.refine_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
-        self.refine_d_5 = make_layer(in_ch=256, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
-
-        self.refine_u_1 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
-        self.refine_u_2 = make_layer(in_ch=768, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.refine_u_3 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.refine_u_4 = make_layer(in_ch=256, out_ch=64, kernel=3, stride=1, num_group=8, norm_layer=cfg.norm_layer)
-        self.refine_u_5 = make_layer(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=cfg.norm_layer)
-
-        self.refine_final = make_layer(pad_type='rep', in_ch=64, out_ch=5, kernel=3, stride=1, act='None', norm_layer='None')
+            self.refine_final = make_layer(pad_type='rep', in_ch=64, out_ch=4, kernel=3, stride=1, act='None', norm_layer='None')
 
     @autocast()
     def forward(self, x):
@@ -417,13 +620,15 @@ class BRDFRefineNet(nn.Module):
         x3 = self.refine_d_3(x2)
         x4 = self.refine_d_4(x3)
         x5 = self.refine_d_5(x4)
+        x6 = self.refine_d_6(x5)
 
-        dx1 = self.refine_u_1(x5)
-        dx2 = self.refine_u_2(F.interpolate(torch.cat([dx1, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = self.refine_u_3(F.interpolate(torch.cat([dx2, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx4 = self.refine_u_4(F.interpolate(torch.cat([dx3, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx5 = self.refine_u_5(F.interpolate(torch.cat([dx4, x1], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        x_out = self.refine_final(dx5)
+        dx1 = self.refine_u_1(x6)
+        dx2 = self.refine_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx3 = self.refine_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx4 = self.refine_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx5 = self.refine_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx6 = self.refine_u_6(F.interpolate(torch.cat([dx5, x1], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        x_out = self.refine_final(dx6)
 
         x_out = 0.5 * (torch.clamp(1.01 * torch.tanh(x_out), -1, 1) + 1)
         return x_out
@@ -432,8 +637,8 @@ class BRDFRefineNet(nn.Module):
 import math
 
 # kernel, stride, padding
-convnet = [[4, 2, 1], [4, 2, 1], [4, 2, 1], [4, 2, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1]]
-layer_names = ['d1', 'd2', 'd3', 'd4', 'd5', 'u1', 'u2', 'u3', 'u4', 'u5', 'final']
+convnet = [[4, 2, 1], [4, 2, 1], [4, 2, 1], [4, 2, 1], [4, 2, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1]]
+layer_names = ['d1', 'd2', 'd3', 'd4', 'd5', 'd6', 'u1', 'u2', 'u3', 'u4', 'u5', 'u6', 'final']
 # convnet = [[7, 2, 3], [3, 2, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 2, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], [3, 1, 1], ]
 # layer_names = ['conv1', 'pool1', 'layer1-1', 'layer1-2', 'layer1-3', 'layer1-4', 'layer2-1', 'layer2-2', 'layer2-3', 'layer2-4', 'layer3-1', 'layer3-2', 'layer3-3', 'layer3-4', 'layer4-1', 'layer4-2', 'layer4-3', 'layer4-4',]
 
@@ -476,3 +681,4 @@ if __name__ == '__main__':
         layerInfos.append(currentLayer)
         printLayer(currentLayer, layer_names[i])
     print("------------------------")
+
