@@ -1,8 +1,8 @@
-import os
-from utils import *
-from multiprocessing import Pool, Queue, Manager
+import cv2
+from multiprocessing import Pool, Manager
 from find_FFpose_func import *
 from xml.etree.ElementTree import ElementTree, parse
+
 # https://tempdev.tistory.com/entry/Python-multiprocessingPool-%EB%A9%80%ED%8B%B0%ED%94%84%EB%A1%9C%EC%84%B8%EC%8B%B1-2
 
 processed_dir = '/home/vig-titan2/Data/OpenRooms_findpose/data/rendering/tmp'
@@ -10,9 +10,8 @@ scenes_root = '/home/vig-titan2/Data/OpenRooms_findpose/data/rendering/scenes'
 num_gpu = 2
 depth_to_baseline = 0.07
 min_baseline = 0.08
-max_baseline = 0.28
+max_baseline = 0.30
 
-a=0
 
 def image_concater(im_list):
     num_img = len(im_list)
@@ -33,6 +32,7 @@ def xml2scene(scene):
     scene_name = a[2]
     scene_type = a[3].split('_')[0]
     return tmp[0] + 'data_FF_10_640/' + scene_type + '_' + xml_type + '/' + scene_name + '/'
+
 
 def scene2xml(scene):
     a = scene.split('data_FF_10_640')
@@ -76,7 +76,8 @@ def main():
     processed_scenes = [m.replace('tmp', 'data_FF_10_640') + '/' for m in processed_scenes]
 
     all_xml = sorted(glob.glob(scenes_root + '/xml/*') + glob.glob(scenes_root + '/xml1/*'))
-    all_scene_xml = [osp.join(a, 'main_FF.xml') for a in all_xml] + [osp.join(a, 'mainDiffMat_FF.xml') for a in all_xml] + [osp.join(a, 'mainDiffLight_FF.xml') for a in all_xml]
+    all_scene_xml = [osp.join(a, 'main_FF.xml') for a in all_xml] + [osp.join(a, 'mainDiffMat_FF.xml') for a in all_xml] + [osp.join(a, 'mainDiffLight_FF.xml')
+                                                                                                                            for a in all_xml]
     outdir_list = [xml2scene(m) for m in all_scene_xml]
     outdir_list = sorted(list(set(outdir_list) - set(processed_scenes)))
     xml_list = [scene2xml(m) for m in outdir_list]
@@ -178,7 +179,7 @@ def main():
                 hwf = np.array([H, W, focal], dtype=float).reshape([3, 1])
                 print(f'{k}, pushed')
                 pool.apply_async(find_ff_pose, (camera, xml, out_dir, k, baseline, hwf, q))
-                # pool.apply_async(find_ff_pose_debug, (camera, xml, out_dir, k, baseline, hwf, q))
+                # find_ff_pose_debug(camera, xml, out_dir, k, baseline, hwf)
                 k_list.append(k)
                 if set(k_list) == set(range(num_cam)):
                     print('all image is pushed.')

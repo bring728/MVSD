@@ -1,5 +1,5 @@
 import os
-from utils import *
+import cv2
 from utils_geometry import *
 import shutil
 from termcolor import colored
