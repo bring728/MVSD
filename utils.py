@@ -11,13 +11,14 @@ HUGE_NUMBER = 1e10
 TINY_NUMBER = 1e-6  # float32 only has 7 decimal digits precision
 eps = 1e-7
 
-img_HWC2CHW = lambda x: x.permute(2, 0, 1)
-img_CHW2HWC = lambda x: x.permute(1, 2, 0)
+def img_CHW2HWC(x):
+    if torch.is_tensor(x):
+        return x.permute(1, 2, 0)
+    else:
+        return np.transpose(x, (1, 2, 0))
+
 img_rgb2bgr = lambda x: x[[2, 1, 0]]
-img_bgr2rgb = lambda x: x[[2, 1, 0]]
-
 gray2rgb = lambda x: x.unsqueeze(2).repeat(1, 1, 3)
-
 to8b = lambda x: (255 * np.clip(x, 0, 1)).astype(np.uint8)
 mse2psnr = lambda x: -10. * np.log10(x + TINY_NUMBER)
 psnr2mse = lambda x: 10 ** -(x / (10.0))
@@ -55,7 +56,7 @@ def img2log_mse(x, y, mask=None):
         return torch.mean((torch.log(x + 1.0) - torch.log(y + 1.0)) ** 2)
     else:
         return torch.sum((torch.log(x + 1.0) - torch.log(y + 1.0)) ** 2 * mask) / (
-                    torch.sum(mask) * (x.shape[1] / mask.shape[1]) + TINY_NUMBER)
+                torch.sum(mask) * (x.shape[1] / mask.shape[1]) + TINY_NUMBER)
 
 
 def img2psnr(x, y, mask=None):
@@ -265,6 +266,7 @@ def loadH5_stage(imName, stage):
             return name, mask, dc, hdr, max_intensity, None, DL_gt, DL_ind
         except:
             return None
+
 
 def predToShading(pred, envWidth=32, envHeight=16, SGNum=12):
     Az = ((np.arange(envWidth) + 0.5) / envWidth - 0.5) * 2 * np.pi

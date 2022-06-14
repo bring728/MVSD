@@ -2,6 +2,7 @@ import os
 
 from torch.utils.data import Dataset
 import time
+import random
 from utils import *
 from utils_geometry import *
 from utils_geometry import _34_to_44
@@ -9,21 +10,15 @@ import scipy.ndimage as ndimage
 import os.path as osp
 
 
-# import six
-# import lmdb
-# from PIL import Image
-# import pyarrow as pa
-# import pickle
-
 class Openrooms_FF(Dataset):
     def __init__(self, dataRoot, cfg, stage, phase='TRAIN', debug=False):
-        self.num_view_min = cfg.num_view_min
         self.num_view_all = cfg.num_view_all
-        self.range = self.num_view_all - self.num_view_min + 1
         self.dataRoot = dataRoot
         self.cfg = cfg
         self.stage = stage
         self.phase = phase
+        self.idx_list = list(range(1, self.num_view_all + 1))
+        self.idx_list = list(map(str, self.idx_list))
 
         if phase == 'TRAIN':
             sceneFile = osp.join(dataRoot, 'train.txt')
@@ -40,11 +35,11 @@ class Openrooms_FF(Dataset):
         self.nameList = []
         self.matrixList = []
 
-        idx_list = list(range(self.num_view_all))
         for scene in sceneList:
-            self.nameList.append([scene + '{}_' + f'{i + 1}' + '.{}' for i in idx_list])
-            self.matrixList.append(np.load(osp.join(dataRoot, scene + 'poses_bounds.npy'))[:3, :5, :])
-        self.matrixList = np.stack(self.matrixList)
+            # self.nameList += [scene + '{}_' + f'{i + 1}' + '.{}' for i in idx_list]
+            self.nameList += [scene + '$' + i for i in self.idx_list]
+            # self.matrixList.append(np.load(osp.join(dataRoot, scene + 'poses_bounds.npy'))[:3, :5, :])
+        # self.matrixList = np.stack(self.matrixList)
         self.length = len(self.nameList)
 
     def __len__(self):
@@ -52,19 +47,18 @@ class Openrooms_FF(Dataset):
 
     def __getitem__(self, ind):
         batchDict = {}
-        name_list = [osp.join(self.dataRoot, a) for a in self.nameList[ind]]
+        scene, target_idx = self.nameList[ind].split('$')
+        training_idx = self.idx_list.copy()
+        training_idx.remove(target_idx)
+        random.shuffle(training_idx)
+        all_idx = [target_idx, ] + training_idx
+        scene = osp.join(self.dataRoot, scene)
+        name_list = [scene + '{}_' + a + '.{}' for a in all_idx]
         batchDict['name'] = name_list[0]
+        cam_mats = np.load(scene + 'cam_mats.npy')
 
-        # num_view = self.num_view_min + np.random.choice(self.range, 1)[0]
-        num_view = self.num_view_all
-        training_pair_idx = np.random.choice(self.num_view_all, num_view, replace=False)
-        target_idx = training_pair_idx[0]
-
-        # target_depth_norm = loadBinary(name_list[target_idx].format('depthnorm', 'dat')).astype(np.float32)
-        # batchDict['target_depth_norm'] = target_depth_norm
-
-        target_im = loadHdr(name_list[target_idx].format('im', 'rgbe'))
-        seg = loadImage(name_list[target_idx].format('immask', 'png'))[0:1, :, :]
+        target_im = loadHdr(name_list[0].format('im', 'rgbe'))
+        seg = loadImage(name_list[0].format('immask', 'png'))[0:1, :, :]
         scene_scale = get_hdr_scale(target_im, seg, self.phase)
 
         segObj = (seg > 0.9)
@@ -78,18 +72,21 @@ class Openrooms_FF(Dataset):
         depthest_list = []
         conf_list = []
         depth_norm_list = []
-        for idx in training_pair_idx:
-            im = loadHdr(name_list[idx].format('im', 'rgbe'))
+        for name, idx in zip(name_list, all_idx):
+            idx = int(idx) - 1
+            im = loadHdr(name.format('im', 'rgbe'))
             im = np.clip(im * scene_scale, 0, 1.0)
-            poses = self.matrixList[ind, ..., idx]
-            src_c2w_list.append(_34_to_44(poses[:, :4]))
-            h, w, f = poses[:, -1]
+            rgb_list.append(im)
+            poses_hwf_bounds = cam_mats[..., idx]
+            src_c2w_list.append(_34_to_44(poses_hwf_bounds[:, :4]))
+            h, w, f = poses_hwf_bounds[:, -2]
             intrinsic = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=float)
             src_int_list.append(intrinsic)
-            rgb_list.append(im)
-            depthest_list.append(loadBinary(name_list[idx].format('depthest', 'dat')))
-            conf_list.append(loadBinary(name_list[idx].format('conf', 'dat')))
-            depth_norm_list.append(loadBinary(name_list[idx].format('depthnorm', 'dat')))
+            conf_list.append(loadBinary(name.format('conf', 'dat')))
+            depthest = loadBinary(name.format('depthest', 'dat'))
+            depthest_list.append(depthest)
+            depth_norm = np.clip(depthest / poses_hwf_bounds[1, -1], 0, 1)
+            depth_norm_list.append(depth_norm)
 
         batchDict['rgb'] = np.stack(rgb_list, 0).astype(np.float32)
         batchDict['depth_est'] = np.stack(depthest_list, 0).astype(np.float32)
@@ -100,19 +97,19 @@ class Openrooms_FF(Dataset):
         w2target = np.linalg.inv(src_c2w_list[0])
         batchDict['c2w'] = (w2target @ np.stack(src_c2w_list, 0)).astype(np.float32)
 
-        normal_est = loadH5(name_list[target_idx].format('normalest', 'h5'))
+        normal_est = loadH5(name_list[0].format('normalest', 'h5'))
         batchDict['normal'] = normal_est
-        DL = loadH5(name_list[target_idx].format('DLest', 'h5'))
+        DL = loadH5(name_list[0].format('DLest', 'h5'))
         batchDict['DL'] = DL
 
         if self.stage == '2':
-            albedo = loadImage(name_list[target_idx].format('imbaseColor', 'png'))
+            albedo = loadImage(name_list[0].format('imbaseColor', 'png'))
             batchDict['albedo_gt'] = (albedo ** 2.2).astype(np.float32)
-            rough = loadImage(name_list[target_idx].format('imroughness', 'png'))[0:1, :, :].astype(np.float32)
+            rough = loadImage(name_list[0].format('imroughness', 'png'))[0:1, :, :].astype(np.float32)
             batchDict['rough_gt'] = rough
 
         if self.stage == '3':
-            envmaps, envmapsInd = loadEnvmap(name_list[target_idx].format('imenv', 'hdr'), self.cfg.GL.env_height, self.cfg.GL.env_width,
+            envmaps, envmapsInd = loadEnvmap(name_list[0].format('imenv', 'hdr'), self.cfg.GL.env_height, self.cfg.GL.env_width,
                                              self.cfg.GL.env_rows, self.cfg.GL.env_cols)
             envmaps = envmaps * scene_scale
             batchDict['envmaps_gt'] = envmaps.astype(np.float32)

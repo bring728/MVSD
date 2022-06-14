@@ -18,7 +18,8 @@ if __name__ == '__main__':
                 if len(glob.glob(osp.join(scene, f'{k}_*.rgbe'))) != 9 or len(glob.glob(osp.join(scene, f'{k}_*.hdr'))) != 9 or len(
                         glob.glob(osp.join(scene, f'{k}_imdepth_*.dat'))) != 9 or len(glob.glob(osp.join(scene, f'{k}_*.png'))) != 36:
                     # env_direct_list.append((osp.join(scene, k) + '_').split('OpenRooms_FF/')[1])
-                    raise Exception('file num error', scene, k)
+                    if len(glob.glob(osp.join(scene, f'{k}_*.rgbe'))) != 0:
+                        raise Exception('file num error', scene, k)
                 # for pfm in glob.glob(osp.join(scene, f'{k}_conf*.dat')):
                 #     os.remove(pfm)
                 for pfm in glob.glob(osp.join(scene, f'{k}_depthvis*')):
