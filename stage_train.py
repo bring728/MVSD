@@ -10,20 +10,16 @@ import os
 
 root = '/home/happily/Data'
 
-def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume=False):
+def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume=False, run_id=None):
     if debug:
         os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
     if is_DDP:
-        torch.distributed.init_process_group(backend='nccl', init_method='tcp://127.0.0.1:2958', world_size=num_gpu, rank=gpu)
+        torch.distributed.init_process_group(backend='nccl', init_method='tcp://127.0.0.1:2918', world_size=num_gpu, rank=gpu)
         torch.cuda.set_device(gpu)
     else:
         num_gpu = 1
     record_flag = ((is_DDP and gpu == 0) or not is_DDP) and not debug
-    stage, cfg, model_type, run_id, wandb_obj, dataRoot, outputRoot, experiment = load_id_wandb(config, record_flag, resume, root)
-    if stage.startswith('1'):
-        torch.backends.cudnn.benchmark = True
-    else:
-        torch.backends.cudnn.benchmark = False
+    stage, cfg, model_type, run_id, wandb_obj, dataRoot, outputRoot, experiment = load_id_wandb(config, record_flag, resume, root, run_id)
 
     ckpt_prefix = osp.join(experiment, f'model_{model_type}')
     exp_name = osp.basename(experiment)
@@ -92,4 +88,4 @@ if __name__ == "__main__":
     phase = 'TRAIN'
     is_DDP = False
     resume = False
-    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1-1_0.yml', is_DDP=is_DDP, resume=resume)
+    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage2_0.yml', is_DDP=is_DDP, resume=resume, run_id='06241801_stage2')

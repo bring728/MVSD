@@ -7,10 +7,12 @@ from stage_output import output_stage_func
 # import imageio
 # imageio.plugins.freeimage.download()
 
+torch.backends.cudnn.benchmark = False
+
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         num_gpu = 4
-        config = 'stage1-1_0.yml'
+        config = 'stage2_0.yml'
     else:
         num_gpu = int(sys.argv[1])
         config = sys.argv[2]
@@ -20,9 +22,10 @@ if __name__ == '__main__':
     phase = 'TRAIN'
     resume = False
     torch.multiprocessing.spawn(train, nprocs=num_gpu, args=(num_gpu, config, debug, phase, is_DDP, resume))
-
+    # resume = True
+    # torch.multiprocessing.spawn(train, nprocs=num_gpu, args=(num_gpu, config, debug, phase, is_DDP, resume, '06232156_stage2'))
     # debug = True
     # resume = True
-    # torch.multiprocessing.spawn(output_stage_func, nprocs=num_gpu, args=(num_gpu, config, debug, True, resume))
+    # torch.multiprocessing.spawn(output_stage_func, nprocs=num_gpu, args=(num_gpu, config, debug, True, resume, '06221801_stage1-2'))
     # torch.multiprocessing.spawn(preprocess_stage_func, nprocs=num_gpu, args=(num_gpu, True))
     print('training is done.')

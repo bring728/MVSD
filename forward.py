@@ -10,6 +10,7 @@ def sample_view(data, num_view):
     data['rgb'] = data['rgb'][:, :num_view]
     data['mask'] = data['mask'][:, :num_view]
     data['depth_est'] = data['depth_est'][:, :num_view]
+    data['depth_gt'] = data['depth_gt'][:, :num_view]
     data['depth_norm'] = data['depth_norm'][:, :num_view]
     data['conf'] = data['conf'][:, :num_view]
     data['cam'] = data['cam'][:, :num_view]
@@ -29,11 +30,11 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             total_loss = cfg.lambda_mse * normal_mse_err + cfg.lambda_ang * normal_ang_err
             scalars_to_log['train/total_loss'] = total_loss.item()
             pred['normal'] = normal_pred
+
         elif stage == '1-2':
             with torch.no_grad():
-                normal_pred = curr_model.normal_net(data['input'])
-            pred['normal'] = normal_pred
-            rgbdcn = torch.cat([data['input'], 0.5 * (normal_pred + 1)], dim=1)
+                pred['normal'] = curr_model.normal_net(data['input'])
+            rgbdcn = torch.cat([data['input'], 0.5 * (pred['normal'] + 1)], dim=1)
             axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
             if phase == 'output':
                 bn, _, _, rows, cols = axis.shape
@@ -56,40 +57,72 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
                 total_loss = cfg.lambda_vis_prior * vis_beta_loss + env_scaled_loss
                 scalars_to_log['train/total_loss'] = total_loss.item()
+
         elif stage == '2':
             sample_view(data, 7 + np.random.choice(3, 1)[0])
-            bn, vn, _, h, w = data['rgb'].shape
-            if cfg.BRDF.feature.input == 'rgbdc':
-                rgbdc = torch.cat([data['rgb'], data['depth_norm'], data['conf']], dim=2).reshape([bn * vn, 5, h, w])
-                featmaps = curr_model.feature_net(rgbdc)
-            else:
-                rgb = data['rgb'].reshape([bn * vn, 3, h, w])
-                featmaps = curr_model.feature_net(rgb)
+            target_rgbdc = torch.cat([data['rgb'][:, 0], data['depth_norm'][:, 0], data['conf'][:, 0]], dim=1)
 
+            with torch.no_grad():
+                pred['normal'] = curr_model.normal_net(target_rgbdc)
+                rgbdcn = torch.cat([target_rgbdc, 0.5 * (pred['normal'] + 1)], dim=1)
+                axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
+                bn, _, _, rows, cols = axis.shape
+                DL_pred = torch.cat([axis, sharpness, intensity * vis], dim=2).reshape((bn, -1, rows, cols))
+                pred['DL'] = DL_pred
+            pixel_batch = helper_dict['pixels']
             if save_image_flag:
-                DL = data['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
+                DL = pred['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
                 envmaps_pred = helper_dict['sg2env'].forward(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:], None)
                 pred['envmaps'] = envmaps_pred
 
-            pixel_batch = helper_dict['pixels']
-            rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_est'], data['rgb'],
-                                                             featmaps)
-            normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
-            DL_target = F.grid_sample(data['DL'], pixel_batch[..., 3:][None].expand([bn, -1, -1, -1]), align_corners=False)
+            if cfg.BRDF.except_feature:
+                if cfg.BRDF.gt:
+                    rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_gt'], data['rgb'],
+                                                                     None)
+                else:
+                    rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_est'], data['rgb'],
+                                                                     None)
+                normal_pred = pred['normal'].permute(0, 2, 3, 1)[:, :, :, None]
+                DL_target = F.grid_sample(pred['DL'], pixel_batch[..., 3:][None].expand([bn, -1, -1, -1]), align_corners=False, mode='nearest')
 
-            brdf = curr_model.brdf_net(rgb_feat, viewdir, proj_err, normal_pred, DL_target.permute(0, 2, 3, 1)[:, :, :, None]).permute(0, 3, 1, 2)
-            if cfg.BRDF.refine.use:
-                refine_input = torch.cat([data['depth_norm'][:, 0], data['conf'][:, 0], brdf], dim=1)
-                if cfg.BRDF.refine.input == 'rgbdc':
-                    refine_input = torch.cat([data['rgb'][:, 0], refine_input], dim=1)
+                brdf = curr_model.brdf_net(rgb_feat, viewdir, proj_err, normal_pred, DL_target.permute(0, 2, 3, 1)[:, :, :, None]).permute(0, 3, 1, 2)
+                refine_input = torch.cat([target_rgbdc, brdf], dim=1)
                 brdf = curr_model.brdf_refine_net(refine_input)
 
+            else:
+                bn, vn, _, h, w = data['rgb'].shape
+                if cfg.BRDF.context_feature.input == 'rgbdc':
+                    rgbdc = torch.cat([data['rgb'], data['depth_norm'], data['conf']], dim=2).reshape([bn * vn, 5, h, w])
+                    featmaps = curr_model.feature_net(rgbdc)
+                else:
+                    rgb = data['rgb'].reshape([bn * vn, 3, h, w])
+                    featmaps = curr_model.feature_net(rgb)
+
+                if cfg.BRDF.gt:
+                    rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_gt'], data['rgb'],
+                                                                     featmaps)
+                else:
+                    rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_est'], data['rgb'],
+                                                                     featmaps)
+                normal_pred = pred['normal'].permute(0, 2, 3, 1)[:, :, :, None]
+                DL_target = F.grid_sample(pred['DL'], pixel_batch[..., 3:][None].expand([bn, -1, -1, -1]), align_corners=False, mode='nearest')
+
+                brdf = curr_model.brdf_net(rgb_feat, viewdir, proj_err, normal_pred, DL_target.permute(0, 2, 3, 1)[:, :, :, None]).permute(0, 3, 1, 2)
+                if cfg.BRDF.refine.use:
+                    refine_input = torch.cat([target_rgbdc, brdf], dim=1)
+                    if cfg.BRDF.refine.context_residual:
+                        _, c, h, w = featmaps.shape
+                        target_feat = featmaps.reshape([bn, vn, c, h, w])[:, 0]
+                        brdf = curr_model.brdf_refine_net(refine_input, target_feat)
+                    else:
+                        brdf = curr_model.brdf_refine_net(refine_input)
+
             segBRDF = data['mask'][:, :1]
-            albedo_pred = brdf[:, :3]
-            rough_pred = brdf[:, 3:4]
+            albedo_pred = brdf[0]
+            rough_pred = brdf[1]
             pred['rough'] = rough_pred
             if cfg.BRDF.conf.use:
-                conf_pred = brdf[:, 4:]
+                conf_pred = brdf[2]
                 pred['conf'] = conf_pred
                 if cfg.confloss == 'linear':
                     conf_loss = img2L1Loss(conf_pred, 1.0, segBRDF)
@@ -142,8 +175,11 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list, fea
     # print(torch.mean(torch.abs(pixel_rgbd_k[0, 0, :3] - im_list[0, 0, :])))
 
     rgb_sampled = pixel_rgbd_k[:, :, :3]
-    feat_sampled = F.grid_sample(featmaps, pixel_coord_k_norm, align_corners=False).reshape([bn, vn, -1, h, w])
-    rgb_feat_sampled = torch.cat([rgb_sampled, feat_sampled], dim=2).permute(0, 3, 4, 1, 2)
+    if featmaps is None:
+        rgb_feat_sampled = rgb_sampled.permute(0, 3, 4, 1, 2)
+    else:
+        feat_sampled = F.grid_sample(featmaps, pixel_coord_k_norm, align_corners=False, mode='nearest').reshape([bn, vn, -1, h, w])
+        rgb_feat_sampled = torch.cat([rgb_sampled, feat_sampled], dim=2).permute(0, 3, 4, 1, 2)
     viewdir = F.normalize((c2w_list[:, :, None, None, :3, :3] @ cam_coord_k)[..., 0], dim=-1)
     # weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
     # weight = weight / (torch.sum(weight, dim=1, keepdim=True) + TINY_NUMBER)

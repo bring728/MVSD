@@ -69,6 +69,7 @@ class Openrooms_FF(Dataset):
         src_int_list = []
         rgb_list = []
         depthest_list = []
+        depthgt_list = []
         conf_list = []
         depth_norm_list = []
         for name, idx in zip(name_list, all_idx):
@@ -84,11 +85,14 @@ class Openrooms_FF(Dataset):
             conf_list.append(loadBinary(name.format('conf', 'dat')))
             depthest = loadBinary(name.format('depthest', 'dat'))
             depthest_list.append(depthest)
+            depthgt = loadBinary(name.format('imdepth', 'dat'))
+            depthgt_list.append(depthgt)
             depth_norm = np.clip(depthest / poses_hwf_bounds[1, -1], 0, 1)
             depth_norm_list.append(depth_norm)
 
         batchDict['rgb'] = np.stack(rgb_list, 0).astype(np.float32)
         batchDict['depth_est'] = np.stack(depthest_list, 0).astype(np.float32)
+        batchDict['depth_gt'] = np.stack(depthgt_list, 0).astype(np.float32)
         batchDict['conf'] = np.stack(conf_list, 0).astype(np.float32)
         batchDict['depth_norm'] = np.stack(depth_norm_list, 0).astype(np.float32)
         batchDict['cam'] = np.stack(src_int_list, 0).astype(np.float32)
@@ -122,8 +126,6 @@ class Openrooms_FF_single(Dataset):
         self.cfg = cfg
         self.stage = stage
         self.phase = phase
-        self.idx_list = list(range(1, cfg.num_view_all + 1))
-        self.idx_list = list(map(str, self.idx_list))
 
         if phase == 'TRAIN':
             sceneFile = osp.join(dataRoot, 'train.txt')
@@ -136,9 +138,11 @@ class Openrooms_FF_single(Dataset):
             sceneList = fIn.readlines()
         sceneList = [a.strip() for a in sceneList]
 
+        idx_list = list(range(1, cfg.num_view_all + 1))
+        self.idx_list = list(map(str, idx_list))
         self.nameList = []
         for scene in sceneList:
-            # self.nameList += [scene + '{}_' + f'{i + 1}' + '.{}' for i in idx_list]
+            # self.nameList += [scene + '{}_' + f'{i}' + '.{}' for i in idx_list]
             self.nameList += [scene + '$' + i for i in self.idx_list]
         # self.nameList = np.array(self.nameList).astype(np.string_)
         self.length = len(self.nameList)
@@ -147,14 +151,14 @@ class Openrooms_FF_single(Dataset):
         return self.length
 
     def __getitem__(self, ind):
+        batchDict = {}
         scene, target_idx = self.nameList[ind].split('$')
         scene = osp.join(self.dataRoot, scene)
         cam_mats = np.load(scene + 'cam_mats.npy')
         max_depth = cam_mats[1, -1, int(target_idx) - 1]
-
-        batchDict = {}
         name = osp.join(scene + '{}_' + target_idx + '.{}')
         # name = osp.join(self.dataRoot, str(self.nameList[ind], encoding='utf-8'))
+        # name = osp.join(self.dataRoot, self.nameList[ind])
         batchDict['name'] = name
         im = loadHdr(name.format('im', 'rgbe'))
         seg = loadImage(name.format('immask', 'png'))[0:1, :, :]
@@ -171,8 +175,8 @@ class Openrooms_FF_single(Dataset):
         conf = loadBinary(name.format('conf', 'dat'))
         depthest = loadBinary(name.format('depthest', 'dat'))
         depth_norm = np.clip(depthest / max_depth, 0, 1)
-        input_data = np.concatenate([im, depth_norm, conf], axis=0).astype(np.float32)
-        batchDict['input'] = input_data
+        # depth_norm = loadBinary(name.format('midas', 'dat'))
+        batchDict['input'] = np.concatenate([im, depth_norm, conf], axis=0).astype(np.float32)
 
         if self.stage == '1-1':
             normal = loadImage(name.format('imnormal', 'png'), normalize_01=False)
@@ -180,6 +184,8 @@ class Openrooms_FF_single(Dataset):
             batchDict['normal_gt'] = normal
 
         elif self.stage == '1-2':
+            # normal_est = loadH5(name.format('normalest', 'h5'))
+            # batchDict['normal'] = normal_est
             envmaps, envmapsInd = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
                                              self.cfg.DL.env_rows,
                                              self.cfg.DL.env_cols)

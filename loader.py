@@ -13,7 +13,7 @@ import yaml
 import wandb
 
 
-def load_id_wandb(config, record_flag, resume, root):
+def load_id_wandb(config, record_flag, resume, root, id=None):
     stage = config.split('stage')[1].split('_')[0]
     if stage == '1-1':
         model_type = 'normal'
@@ -31,17 +31,21 @@ def load_id_wandb(config, record_flag, resume, root):
         cfg = CfgNode(cfg_dict)
     wandb_obj = None
     if resume:
-        run_id = sorted(os.listdir(outputRoot))[-1]
-        if record_flag:
-            wandb_obj = wandb.init(project=f'MVSD-stage{stage}', id=run_id, resume='must')
-            # wandb_obj.config.update(cfg)
-            cfg_saved = CfgNode(wandb_obj.config._items)
-            for k in cfg_saved.keys():
-                if k == '_wandb':
-                    continue
-                if cfg_saved[k] != cfg[k]:
-                    print('config does not match.')
-                    raise Exception('config does not match.')
+        if id is None:
+            raise Exception('run_id is None')
+        # run_id = sorted(os.listdir(outputRoot))[-1]
+        run_id = id
+        print('resume: ', run_id)
+        # if record_flag:
+        #     wandb_obj = wandb.init(project=f'MVSD-stage{stage}', id=run_id, resume='must')
+        #     wandb_obj.config.update(cfg)
+        #     cfg_saved = CfgNode(wandb_obj.config._items)
+        #     for k in cfg_saved.keys():
+        #         if k == '_wandb':
+        #             continue
+        #         if cfg_saved[k] != cfg[k]:
+        #             print('config does not match.')
+        #             raise Exception('config does not match.')
     else:
         current_time = datetime.now().strftime('%m%d%H%M')
         run_id = f'{current_time}_stage{stage}'
@@ -66,9 +70,9 @@ def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag):
         train_dataset = Openrooms_FF(dataRoot, cfg, stage, 'TRAIN', debug)
         val_dataset = Openrooms_FF(dataRoot, cfg, stage, 'TEST', debug)
 
-    if debug:
-        # batch_per_gpu = 1
-        worker_per_gpu = 0
+    # if debug:
+    # batch_per_gpu = 1
+    # worker_per_gpu = 0
 
     train_sampler = None
     if is_DDP:
@@ -94,6 +98,7 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
     if stage == '1-1':
         curr_model = MonoNormalModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
         if do_watch:
+            print(gpu, 'watch')
             wandb_obj.watch(curr_model.normal_net)
 
     elif stage == '1-2':

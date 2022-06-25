@@ -1,16 +1,17 @@
-nepoch: 80
+nepoch: 100
 batchsize: 16
-num_workers: 10
+num_workers: 12
 lr: 1e-4
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
 lambda_vis_prior: 0.001
 
 normal:
-  path: 06022018_stage1-1
+  path: 06142149_stage1-1
   norm_layer: group
 
 DL:
+  unified_decoder: False
   norm_layer: batch
   SGNum: 4
   env_height: 8

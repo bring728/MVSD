@@ -64,7 +64,7 @@ def img2psnr(x, y, mask=None):
 
 
 def env_vis(env, h, w, r, c):
-    env = torch.permute(env / torch.max(env), (0, 1, 3, 2, 4)).reshape(3, r * h, c * w)
+    env = torch.permute(env / (torch.max(env) + TINY_NUMBER), (0, 1, 3, 2, 4)).reshape(3, r * h, c * w)
     return env
 
 

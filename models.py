@@ -1,7 +1,6 @@
-import torch
-import numpy as np
 import os
-from network import *
+from mlp import *
+from cnn import *
 import os.path as osp
 
 
@@ -245,26 +244,30 @@ class BRDFModel(object):
         self.is_DDP = is_DDP
         device = torch.device('cuda:{}'.format(gpu))
 
-        # root = osp.dirname(osp.dirname(experiment))
-        # self.normal_net = NormalNet(cfg.normal).to(device)
-        # self.DL_net = DirectLightingNet(cfg.DL).to(device)
-        # if cfg.normal.path == None:
-        #     cfg.normal.path = osp.join(osp.join(root, 'stage1-1'), sorted(os.listdir(osp.join(root, 'stage1-1')))[-1])
-        # if cfg.DL.path == None:
-        #     cfg.DL.path = osp.join(osp.join(root, 'stage1-1'), sorted(os.listdir(osp.join(root, 'stage1-2')))[-1])
-        # if self.is_DDP:
-        #     normal_ckpt = torch.load(osp.join(root, 'stage1-1', cfg.normal.path, 'model_normal_latest.pth'),
-        #                              map_location={'cuda:0': 'cuda:%d' % self.gpu})
-        #     DL_ckpt = torch.load(osp.join(root, 'stage1-2', cfg.DL.path, 'model_DL_latest.pth'),
-        #                          map_location={'cuda:0': 'cuda:%d' % self.gpu})
-        # else:
-        #     normal_ckpt = torch.load(osp.join(root, 'stage1-1', cfg.normal.path, 'model_normal_latest.pth'))
-        #     DL_ckpt = torch.load(osp.join(root, 'stage1-2', cfg.DL.path, 'model_DL_latest.pth'))
-        # self.normal_net.load_state_dict(normal_ckpt['normal_net'])
-        # self.DL_net.load_state_dict(DL_ckpt['DL_net'])
+        root = osp.dirname(osp.dirname(experiment))
+        self.normal_net = NormalNet(cfg.normal).to(device)
+        self.DL_net = DirectLightingNet(cfg.DL).to(device)
+        if cfg.normal.path == None:
+            cfg.normal.path = osp.join(osp.join(root, 'stage1-1'), sorted(os.listdir(osp.join(root, 'stage1-1')))[-1])
+        if cfg.DL.path == None:
+            cfg.DL.path = osp.join(osp.join(root, 'stage1-1'), sorted(os.listdir(osp.join(root, 'stage1-2')))[-1])
+
+        normal_path = osp.join(root, 'stage1-1', cfg.normal.path, 'model_normal_latest.pth')
+        print('staeg 1-1 load from ', normal_path)
+        DL_path = osp.join(root, 'stage1-2', cfg.DL.path, 'model_DL_latest.pth')
+        print('staeg 1-2 load from ', DL_path)
+        if self.is_DDP:
+            normal_ckpt = torch.load(normal_path, map_location={'cuda:0': 'cuda:%d' % self.gpu})
+            DL_ckpt = torch.load(DL_path, map_location={'cuda:0': 'cuda:%d' % self.gpu})
+        else:
+            normal_ckpt = torch.load(normal_path)
+            DL_ckpt = torch.load(DL_path)
+        self.normal_net.load_state_dict(normal_ckpt['normal_net'])
+        self.DL_net.load_state_dict(DL_ckpt['DL_net'])
 
         # create feature extraction network
-        self.feature_net = ResUNet(cfg.BRDF.feature).to(device)
+        # self.feature_net = ResUNet(cfg.BRDF.context_feature).to(device)
+        self.feature_net = BRDFContextNet(cfg.BRDF.context_feature).to(device)
         self.brdf_net = MultiViewAggregation(cfg).to(device)
         if cfg.BRDF.refine.use:
             self.brdf_refine_net = BRDFRefineNet(cfg).to(device)
@@ -276,7 +279,7 @@ class BRDFModel(object):
         # optimizer and learning rate scheduler
         self.optimizer = torch.optim.Adam([
             {'params': self.brdf_net.parameters(), 'lr': float(cfg.BRDF.aggregation.lr)},
-            {'params': self.feature_net.parameters(), 'lr': float(cfg.BRDF.feature.lr)},
+            {'params': self.feature_net.parameters(), 'lr': float(cfg.BRDF.context_feature.lr)},
             {'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.BRDF.refine.lr)}])
 
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
@@ -362,4 +365,4 @@ class BRDFModel(object):
         else:
             print('No ckpts found, training from scratch...')
             step = 0
-        return step
+        return int(step)
