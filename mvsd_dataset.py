@@ -106,10 +106,11 @@ class Openrooms_FF(Dataset):
         w2target = np.linalg.inv(src_c2w_list[0])
         batchDict['c2w'] = (w2target @ np.stack(src_c2w_list, 0)).astype(np.float32)
 
+        # scene scale changes during training time
         # normal_est = loadH5(name_list[0].format('normalest', 'h5'))
         # batchDict['normal'] = normal_est
-        DL = loadH5(name_list[0].format('DLest', 'h5'))
-        batchDict['DL'] = DL
+        # DL = loadH5(name_list[0].format('DLest', 'h5'))
+        # batchDict['DL'] = DL
 
         if self.stage == '2':
             albedo = loadImage(name_list[0].format('imbaseColor', 'png'))

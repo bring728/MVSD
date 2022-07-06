@@ -20,6 +20,7 @@ DL:
 
 
 BRDF:
+  except_feature: True
   gt: True
   lambda_albedo: 3.0
   lambda_rough: 1.0
@@ -28,22 +29,23 @@ BRDF:
   context_feature:
     input: rgbdc
     dim: 32
+    norm_layer: group
     lr: 1e-4
 
   aggregation:
-#    type: mlp
-    pbr_hidden: 64
+    pbr_collect: sum
+    pbr_hidden: 32
     input: dot
-    pbr_feature_dim: 16
-
+    pbr_feature_dim: 8
     type: transformer
+    norm_layer: layer
     head_dim: 16
     mlp_hidden: 16
-    final_hidden: 64
-    lr: 1e-5
+    final_hidden: 32
+    lr: 1e-4
 
   refine:
-    context_residual: True
+    context_concat: True
     use: True
     lr: 1e-4
     norm_layer: group

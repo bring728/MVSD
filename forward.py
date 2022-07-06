@@ -65,11 +65,11 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             bn, _, rows, cols = target_rgbdc.shape
             with torch.no_grad():
                 data['normal'] = curr_model.normal_net(target_rgbdc)
-                # rgbdcn = torch.cat([target_rgbdc, 0.5 * (data['normal'] + 1)], dim=1)
-                # axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
-                # bn, _, _, rows, cols = axis.shape
-                # DL_pred = torch.cat([axis, sharpness, intensity * vis], dim=2).reshape((bn, -1, rows, cols))
-                # data['DL'] = DL_pred
+                rgbdcn = torch.cat([target_rgbdc, 0.5 * (data['normal'] + 1)], dim=1)
+                axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
+                bn, _, _, rows, cols = axis.shape
+                DL_pred = torch.cat([axis, sharpness, intensity * vis], dim=2).reshape((bn, -1, rows, cols))
+                data['DL'] = DL_pred
 
             pixels = helper_dict['pixels']
             pixels_norm = helper_dict['pixels_norm']

@@ -246,28 +246,28 @@ class BRDFModel(object):
 
         root = osp.dirname(osp.dirname(experiment))
         self.normal_net = NormalNet(cfg.normal).to(device)
-        # self.DL_net = DirectLightingNet(cfg.DL).to(device)
+        self.DL_net = DirectLightingNet(cfg.DL).to(device)
         if cfg.normal.path == None:
             cfg.normal.path = osp.join(osp.join(root, 'stage1-1'), sorted(os.listdir(osp.join(root, 'stage1-1')))[-1])
-        # if cfg.DL.path == None:
-        #     cfg.DL.path = osp.join(osp.join(root, 'stage1-1'), sorted(os.listdir(osp.join(root, 'stage1-2')))[-1])
+        if cfg.DL.path == None:
+            cfg.DL.path = osp.join(osp.join(root, 'stage1-1'), sorted(os.listdir(osp.join(root, 'stage1-2')))[-1])
         normal_path = osp.join(root, 'stage1-1', cfg.normal.path, 'model_normal_latest.pth')
         print('staeg 1-1 load from ', normal_path)
-        # DL_path = osp.join(root, 'stage1-2', cfg.DL.path, 'model_DL_latest.pth')
-        # print('staeg 1-2 load from ', DL_path)
+        DL_path = osp.join(root, 'stage1-2', cfg.DL.path, 'model_DL_latest.pth')
+        print('staeg 1-2 load from ', DL_path)
         if self.is_DDP:
             normal_ckpt = torch.load(normal_path, map_location={'cuda:0': 'cuda:%d' % self.gpu})
-            # DL_ckpt = torch.load(DL_path, map_location={'cuda:0': 'cuda:%d' % self.gpu})
+            DL_ckpt = torch.load(DL_path, map_location={'cuda:0': 'cuda:%d' % self.gpu})
         else:
             normal_ckpt = torch.load(normal_path)
-            # DL_ckpt = torch.load(DL_path)
+            DL_ckpt = torch.load(DL_path)
         self.normal_net.load_state_dict(normal_ckpt['normal_net'])
-        # self.DL_net.load_state_dict(DL_ckpt['DL_net'])
+        self.DL_net.load_state_dict(DL_ckpt['DL_net'])
         if self.is_DDP:
             self.normal_net = torch.nn.parallel.DistributedDataParallel(self.normal_net, device_ids=[gpu], )
-            # self.DL_net = torch.nn.parallel.DistributedDataParallel(self.DL_net, device_ids=[gpu], )
+            self.DL_net = torch.nn.parallel.DistributedDataParallel(self.DL_net, device_ids=[gpu], )
         self.normal_net.eval()
-        # self.DL_net.eval()
+        self.DL_net.eval()
 
         # create feature extraction network
         # self.feature_net = ResUNet(cfg.BRDF.context_feature).to(device)

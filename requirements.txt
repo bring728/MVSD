@@ -8,5 +8,4 @@ scikit-image
 opencv-python
 scipy
 h5py
-einops
 pyyaml
