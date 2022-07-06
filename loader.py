@@ -118,10 +118,14 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
         u_n = 2.0 * u / cfg.imWidth - 1
         v = v.astype(dtype=np.float32) + 0.5
         v_n = 2.0 * v / cfg.imHeight - 1
-        pixels = np.stack((u, v, np.ones_like(u), u_n, v_n), axis=-1)
+        pixels = np.stack((u, v, np.ones_like(u)), axis=-1)
         pixels = torch.from_numpy(pixels)
-        pixels = pixels.to(gpu, non_blocking=cfg.pinned)
+        pixels = pixels.to(gpu, non_blocking=cfg.pinned)[None, :, :, :3, None]
         helper_dict['pixels'] = pixels
+        pixels_norm = np.stack((u_n, v_n), axis=-1)
+        pixels_norm = torch.from_numpy(pixels_norm)
+        pixels_norm = pixels_norm.to(gpu, non_blocking=cfg.pinned)[None].expand([cfg.batchsize, -1, -1, -1])
+        helper_dict['pixels_norm'] = pixels_norm
         curr_model = BRDFModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
         if do_watch:
             wandb_obj.watch([curr_model.feature_net, curr_model.brdf_net, curr_model.brdf_refine_net], log='all')

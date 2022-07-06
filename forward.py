@@ -6,13 +6,14 @@ from collections import OrderedDict
 from torch.cuda.amp.autocast_mode import autocast
 
 
-def sample_view(data, num_view):
+def sample_view(data, num_view, gt=False):
     data['rgb'] = data['rgb'][:, :num_view]
     data['mask'] = data['mask'][:, :num_view]
     data['depth_est'] = data['depth_est'][:, :num_view]
-    data['depth_gt'] = data['depth_gt'][:, :num_view]
+    if gt:
+        data['depth_gt'] = data['depth_gt'][:, :num_view]
     data['depth_norm'] = data['depth_norm'][:, :num_view]
-    data['conf'] = data['conf'][:, :num_view]
+    # data['conf'] = data['conf'][:, :num_view]
     data['cam'] = data['cam'][:, :num_view]
     data['c2w'] = data['c2w'][:, :num_view]
 
@@ -59,91 +60,65 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 scalars_to_log['train/total_loss'] = total_loss.item()
 
         elif stage == '2':
-            sample_view(data, 7 + np.random.choice(3, 1)[0])
-            target_rgbdc = torch.cat([data['rgb'][:, 0], data['depth_norm'][:, 0], data['conf'][:, 0]], dim=1)
-
+            sample_view(data, 7 + np.random.choice(3, 1)[0], gt=cfg.BRDF.gt)
+            target_rgbdc = torch.cat([data['rgb'][:, 0], data['depth_norm'][:, 0], data['conf']], dim=1)
+            bn, _, rows, cols = target_rgbdc.shape
             with torch.no_grad():
-                pred['normal'] = curr_model.normal_net(target_rgbdc)
-                rgbdcn = torch.cat([target_rgbdc, 0.5 * (pred['normal'] + 1)], dim=1)
-                axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
-                bn, _, _, rows, cols = axis.shape
-                DL_pred = torch.cat([axis, sharpness, intensity * vis], dim=2).reshape((bn, -1, rows, cols))
-                pred['DL'] = DL_pred
-            pixel_batch = helper_dict['pixels']
+                data['normal'] = curr_model.normal_net(target_rgbdc)
+                # rgbdcn = torch.cat([target_rgbdc, 0.5 * (data['normal'] + 1)], dim=1)
+                # axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
+                # bn, _, _, rows, cols = axis.shape
+                # DL_pred = torch.cat([axis, sharpness, intensity * vis], dim=2).reshape((bn, -1, rows, cols))
+                # data['DL'] = DL_pred
+
+            pixels = helper_dict['pixels']
+            pixels_norm = helper_dict['pixels_norm']
             if save_image_flag:
-                DL = pred['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
+                DL = data['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
                 envmaps_pred = helper_dict['sg2env'].forward(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:], None)
-                pred['envmaps'] = envmaps_pred
-
-            if cfg.BRDF.except_feature:
-                if cfg.BRDF.gt:
-                    rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_gt'], data['rgb'],
-                                                                     None)
-                else:
-                    rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_est'], data['rgb'],
-                                                                     None)
-                normal_pred = pred['normal'].permute(0, 2, 3, 1)[:, :, :, None]
-                DL_target = F.grid_sample(pred['DL'], pixel_batch[..., 3:][None].expand([bn, -1, -1, -1]), align_corners=False, mode='nearest')
-
-                brdf = curr_model.brdf_net(rgb_feat, viewdir, proj_err, normal_pred, DL_target.permute(0, 2, 3, 1)[:, :, :, None]).permute(0, 3, 1, 2)
-                refine_input = torch.cat([target_rgbdc, brdf], dim=1)
-                brdf = curr_model.brdf_refine_net(refine_input)
-
+                data['envmaps'] = envmaps_pred
+            bn, vn, _, h, w = data['rgb'].shape
+            if cfg.BRDF.context_feature.input == 'rgbdc':
+                featmaps = curr_model.feature_net(target_rgbdc)
             else:
-                bn, vn, _, h, w = data['rgb'].shape
-                if cfg.BRDF.context_feature.input == 'rgbdc':
-                    rgbdc = torch.cat([data['rgb'], data['depth_norm'], data['conf']], dim=2).reshape([bn * vn, 5, h, w])
-                    featmaps = curr_model.feature_net(rgbdc)
-                else:
-                    rgb = data['rgb'].reshape([bn * vn, 3, h, w])
-                    featmaps = curr_model.feature_net(rgb)
+                rgb = data['rgb'][:, 0]
+                featmaps = curr_model.feature_net(rgb)
 
-                if cfg.BRDF.gt:
-                    rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_gt'], data['rgb'],
-                                                                     featmaps)
-                else:
-                    rgb_feat, viewdir, proj_err = compute_projection(pixel_batch, data['cam'], data['c2w'], data['depth_est'], data['rgb'],
-                                                                     featmaps)
-                normal_pred = pred['normal'].permute(0, 2, 3, 1)[:, :, :, None]
-                DL_target = F.grid_sample(pred['DL'], pixel_batch[..., 3:][None].expand([bn, -1, -1, -1]), align_corners=False, mode='nearest')
+            if cfg.BRDF.gt:
+                rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_gt'], data['rgb'])
+            else:
+                rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_est'], data['rgb'])
+            normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
+            DL_target = F.grid_sample(data['DL'], pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
+            featmaps_dense = F.grid_sample(featmaps, pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
 
-                brdf = curr_model.brdf_net(rgb_feat, viewdir, proj_err, normal_pred, DL_target.permute(0, 2, 3, 1)[:, :, :, None]).permute(0, 3, 1, 2)
-                if cfg.BRDF.refine.use:
-                    refine_input = torch.cat([target_rgbdc, brdf], dim=1)
-                    if cfg.BRDF.refine.context_residual:
-                        _, c, h, w = featmaps.shape
-                        target_feat = featmaps.reshape([bn, vn, c, h, w])[:, 0]
-                        brdf = curr_model.brdf_refine_net(refine_input, target_feat)
-                    else:
-                        brdf = curr_model.brdf_refine_net(refine_input)
+            brdf_feature = curr_model.brdf_net(rgb_sampled, featmaps_dense, viewdir, proj_err, normal_pred, DL_target).permute(0, 3, 1, 2)
+            if cfg.BRDF.refine.use:
+                refine_input = torch.cat([target_rgbdc, brdf_feature], dim=1)
+                if cfg.BRDF.refine.context_concat:
+                    refine_input = torch.cat([refine_input, featmaps_dense.squeeze(-2).permute(0, 3, 1, 2)], dim=1)
+                    brdf_refined = curr_model.brdf_refine_net(refine_input)
+                else:
+                    brdf_refined = curr_model.brdf_refine_net(refine_input)
 
             segBRDF = data['mask'][:, :1]
-            albedo_pred = brdf[0]
-            rough_pred = brdf[1]
-            pred['rough'] = rough_pred
-            if cfg.BRDF.conf.use:
-                conf_pred = brdf[2]
-                pred['conf'] = conf_pred
-                if cfg.confloss == 'linear':
-                    conf_loss = img2L1Loss(conf_pred, 1.0, segBRDF)
-                else:
-                    conf_loss = torch.clamp(-torch.log(conf_pred + 0.1), min=0.0)
-                scalars_to_log['train/conf_loss'] = conf_loss.item()
-            else:
-                conf_pred = None
-                conf_loss = 0.0
-                pred['conf'] = torch.ones_like(rough_pred)
+            albedo_pred_refined = brdf_refined[0]
+            rough_pred_refined = brdf_refined[1]
+            if torch.sum(torch.isnan(rough_pred_refined)) > 0:
+                raise Exception('nan..')
+            pred['rough'] = rough_pred_refined
+            pred['conf'] = torch.ones_like(rough_pred_refined)
 
-            albedo_pred_scaled = LSregress(albedo_pred.detach() * segBRDF, data['albedo_gt'] * segBRDF, albedo_pred)
-            albedo_pred_scaled = torch.clamp(albedo_pred_scaled, 0, 1)
-            pred['albedo'] = albedo_pred_scaled
+            albedo_pred_scaled_refined = LSregress(albedo_pred_refined.detach() * segBRDF, data['albedo_gt'] * segBRDF, albedo_pred_refined)
+            albedo_pred_scaled_refined = torch.clamp(albedo_pred_scaled_refined, 0, 1)
+            pred['albedo'] = albedo_pred_scaled_refined
 
-            albedo_mse_err = img2mse(albedo_pred_scaled, data['albedo_gt'], segBRDF, conf_pred)
-            rough_mse_err = img2mse(rough_pred, data['rough_gt'], segBRDF, conf_pred)
+            albedo_mse_err_refined = img2mse(albedo_pred_scaled_refined, data['albedo_gt'], segBRDF, None)
+            rough_mse_err_refined = img2mse(rough_pred_refined, data['rough_gt'], segBRDF, None)
 
-            scalars_to_log['train/albedo_mse_err'] = albedo_mse_err.item()
-            scalars_to_log['train/rough_mse_err'] = rough_mse_err.item()
-            total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err + cfg.BRDF.lambda_rough * rough_mse_err + cfg.BRDF.lambda_conf * conf_loss
+            scalars_to_log['train/albedo_mse_err'] = albedo_mse_err_refined.item()
+            scalars_to_log['train/rough_mse_err'] = rough_mse_err_refined.item()
+            total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err_refined + cfg.BRDF.lambda_rough * rough_mse_err_refined
             scalars_to_log['train/total_loss'] = total_loss.item()
         else:
             raise Exception('stage error')
@@ -151,12 +126,12 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
     return total_loss, pred
 
 
-def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list, featmaps):
+def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list):
     bn, vn, _, h, w = depth_list.shape
     w2c_list = torch.inverse(c2w_list)
     pixel_depth = depth_list[:, 0, 0, ..., None, None]
 
-    cam_coord = pixel_depth * torch.inverse(int_list[:, None, None, 0]) @ pixel_batch[None, :, :, :3, None]
+    cam_coord = pixel_depth * torch.inverse(int_list[:, None, None, 0]) @ pixel_batch
     # because cam_0 is world
     world_coord = torch.cat([cam_coord, torch.ones_like(cam_coord[:, :, :, :1, :])], dim=-2)
 
@@ -171,15 +146,19 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list, fea
     pixel_rgbd_k = F.grid_sample(torch.cat([im_list, depth_list], dim=2).reshape([bn * vn, 4, h, w]), pixel_coord_k_norm,
                                  align_corners=False, mode='nearest').reshape([bn, vn, 4, h, w])
     proj_err = pixel_depth_k_est - pixel_rgbd_k[:, :, -1, ..., None]
+    # weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
+    # weight = weight / (torch.sum(weight, dim=1, keepdim=True) + TINY_NUMBER)
+    # for i in range(7):
+    #     cv2.imwrite(f'corner_0_{i}.png', cv2fromtorch(weight[0, i]))
+    #     cv2.imwrite(f'corner_1_{i}.png', cv2fromtorch(weight[1, i]))
+
     # print(torch.mean(torch.abs(pixel_rgbd_k[0,0, -1] - depth_list[0, 0, 0])))
     # print(torch.mean(torch.abs(pixel_rgbd_k[0, 0, :3] - im_list[0, 0, :])))
 
-    rgb_sampled = pixel_rgbd_k[:, :, :3]
-    if featmaps is None:
-        rgb_feat_sampled = rgb_sampled.permute(0, 3, 4, 1, 2)
-    else:
-        feat_sampled = F.grid_sample(featmaps, pixel_coord_k_norm, align_corners=False, mode='nearest').reshape([bn, vn, -1, h, w])
-        rgb_feat_sampled = torch.cat([rgb_sampled, feat_sampled], dim=2).permute(0, 3, 4, 1, 2)
+    rgb_sampled = pixel_rgbd_k[:, :, :3].permute(0, 3, 4, 1, 2)
+    # for i in range(7):
+    #     cv2.imwrite(f'corner_0_{i}.png', cv2fromtorch(rgb_sampled[0, i]))
+    #     cv2.imwrite(f'corner_1_{i}.png', cv2fromtorch(rgb_sampled[1, i]))
     viewdir = F.normalize((c2w_list[:, :, None, None, :3, :3] @ cam_coord_k)[..., 0], dim=-1)
     # weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
     # weight = weight / (torch.sum(weight, dim=1, keepdim=True) + TINY_NUMBER)
@@ -202,7 +181,7 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list, fea
     #     rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
     #     cv2.imshow('asd', rgb)
     #     cv2.waitKey(0)
-    return rgb_feat_sampled, viewdir.permute(0, 2, 3, 1, 4), proj_err.permute(0, 2, 3, 1, 4)
+    return rgb_sampled, viewdir.permute(0, 2, 3, 1, 4), proj_err.permute(0, 2, 3, 1, 4)
 
 
 def decompose_single_image(model, gpu, chunk_size, pixels, val_data):

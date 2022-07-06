@@ -198,39 +198,6 @@ def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride
     layers = []
     if pad_type == 'rep':
         layers.append(
-            nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel, stride=stride, bias=norm_layer != 'Batch',
-                      padding_mode='replicate', padding=padding))
-    elif pad_type == 'zeros':
-        layers.append(
-            nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel, stride=stride, bias=norm_layer != 'Batch',
-                      padding_mode='zeros', padding=padding))
-    else:
-        assert 'not implemented pad'
-
-    if norm_layer == 'group':
-        layers.append(nn.GroupNorm(num_groups=num_group, num_channels=out_ch))
-    elif norm_layer == 'batch':
-        layers.append(nn.BatchNorm2d(out_ch))
-    elif norm_layer == 'instance':
-        layers.append(nn.InstanceNorm2d(out_ch))
-    elif norm_layer == 'None':
-        norm = 'none'
-    else:
-        assert 'not implemented pad'
-
-    if act == 'relu':
-        layers.append(nn.ReLU(inplace=True))
-    elif act == 'None':
-        act = 'none'
-    else:
-        assert 'not implemented act'
-    return nn.Sequential(*layers)
-
-
-def make_layer2(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride=1, num_group=4, act='relu', norm_layer='group'):
-    layers = []
-    if pad_type == 'rep':
-        layers.append(
             nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel, stride=stride, bias=norm_layer != 'batch',
                       padding_mode='replicate', padding=padding))
     elif pad_type == 'zeros':
@@ -445,40 +412,36 @@ class BRDFRefineNet(nn.Module):
     def __init__(self, cfg):
         super(BRDFRefineNet, self).__init__()
         input_ch = cfg.BRDF.aggregation.final_hidden + 5
-        if cfg.BRDF.refine.context_residual:
-            context_ch = cfg.BRDF.context_feature.dim
-        else:
-            context_ch = 0
+        if cfg.BRDF.refine.context_concat:
+            input_ch += cfg.BRDF.context_feature.dim
         norm_layer = cfg.BRDF.refine.norm_layer
-        self.refine_d_1 = make_layer2(pad_type='rep', in_ch=input_ch, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=norm_layer)
-        self.refine_d_2 = make_layer2(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=norm_layer)
-        self.refine_d_3 = make_layer2(in_ch=128 + context_ch, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
-        self.refine_d_4 = make_layer2(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
-        self.refine_d_5 = make_layer2(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=norm_layer)
-        self.refine_d_6 = make_layer2(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
+        self.refine_d_1 = make_layer(pad_type='rep', in_ch=input_ch, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer='batch')
+        self.refine_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=norm_layer)
+        self.refine_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
+        self.refine_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
+        self.refine_d_5 = make_layer(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=norm_layer)
+        self.refine_d_6 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
 
-        self.refine_albedo_u_1 = make_layer2(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
-        self.refine_albedo_u_2 = make_layer2(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
-        self.refine_albedo_u_3 = make_layer2(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
-        self.refine_albedo_u_4 = make_layer2(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=norm_layer)
-        self.refine_albedo_u_5 = make_layer2(in_ch=256 + context_ch, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_albedo_u_6 = make_layer2(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_albedo_final = make_layer2(pad_type='rep', in_ch=64, out_ch=3, kernel=3, stride=1, act='None', norm_layer='None')
+        self.refine_albedo_u_1 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
+        self.refine_albedo_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
+        self.refine_albedo_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
+        self.refine_albedo_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=norm_layer)
+        self.refine_albedo_u_5 = make_layer(in_ch=256, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+        self.refine_albedo_u_6 = make_layer(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+        self.refine_albedo_final = make_layer(pad_type='rep', in_ch=64, out_ch=3, kernel=3, stride=1, act='None', norm_layer='None')
 
-        self.refine_rough_u_1 = make_layer2(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
-        self.refine_rough_u_2 = make_layer2(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
-        self.refine_rough_u_3 = make_layer2(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
-        self.refine_rough_u_4 = make_layer2(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=norm_layer)
-        self.refine_rough_u_5 = make_layer2(in_ch=256 + context_ch, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_rough_u_6 = make_layer2(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_rough_final = make_layer2(pad_type='rep', in_ch=64, out_ch=1, kernel=3, stride=1, act='None', norm_layer='None')
+        self.refine_rough_u_1 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
+        self.refine_rough_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
+        self.refine_rough_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
+        self.refine_rough_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=norm_layer)
+        self.refine_rough_u_5 = make_layer(in_ch=256, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+        self.refine_rough_u_6 = make_layer(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+        self.refine_rough_final = make_layer(pad_type='rep', in_ch=64, out_ch=1, kernel=3, stride=1, act='None', norm_layer='None')
 
     @autocast()
-    def forward(self, x, featmaps=None):
+    def forward(self, x):
         x1 = self.refine_d_1(x)
         x2 = self.refine_d_2(x1)
-        if featmaps is not None:
-            x2 = torch.cat([x2, featmaps], dim=1)
         x3 = self.refine_d_3(x2)
         x4 = self.refine_d_4(x3)
         x5 = self.refine_d_5(x4)

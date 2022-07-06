@@ -1,4 +1,6 @@
 import os
+
+import torch
 from tqdm import tqdm
 from CIS.cis_model import CIS_model
 from mvsd_dataset import Openrooms_FF
@@ -8,6 +10,16 @@ from utils import *
 from forward import model_forward
 from models import *
 import yaml
+a = torch.ones([2, 1024]) * 2.5
+b = torch.ones([1024])
+
+a / b
+
+
+a = {'as': 3, 'asdf': 5}
+b = {}
+b['as'] = a['as']
+b['as'] = 4
 
 
 outfilename = 'cis_output'

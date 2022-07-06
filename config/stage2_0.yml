@@ -33,9 +33,10 @@ BRDF:
     lr: 1e-4
 
   aggregation:
-    pbr_hidden: 64
+    pbr_collect: max
+    pbr_hidden: 32
     input: dot
-    pbr_feature_dim: 16
+    pbr_feature_dim: 8
     type: transformer
     norm_layer: layer
     head_dim: 16
@@ -44,9 +45,9 @@ BRDF:
     lr: 1e-4
 
   refine:
-    context_residual: False
+    context_concat: True
     use: True
-    lr: 1e-5
+    lr: 1e-4
     norm_layer: group
 
   conf:

@@ -28,16 +28,15 @@ def output_stage_func(gpu, num_gpu, config, debug=True, is_DDP=False, resume=Fal
             with torch.no_grad():
                 total_loss, pred = model_forward(stage, 'output', curr_model, helper_dict, val_data, cfg, scalars_to_log, False)
                 name = val_data['name']
-                if stage == '1-1':
-                    normal_name = [n.format('normalest', 'h5') for n in name]
-                    normal_pred = pred['normal']
-                    threads = [threading.Thread(target=th_save_h5, args=(name, img,)) for name, img in zip(normal_name, normal_pred)]
-                    for thread in threads:
-                        thread.start()
-                    for thread in threads:
-                        thread.join()
+                normal_name = [n.format('normalest', 'h5') for n in name]
+                normal_pred = pred['normal']
+                threads = [threading.Thread(target=th_save_h5, args=(name, img,)) for name, img in zip(normal_name, normal_pred)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
 
-                elif stage == '1-2':
+                if stage == '1-2':
                     dl_name = [n.format('DLest', 'h5') for n in name]
                     dl_pred = pred['DL']
                     threads = [threading.Thread(target=th_save_h5, args=(name, img,)) for name, img in zip(dl_name, dl_pred)]
@@ -51,16 +50,15 @@ def output_stage_func(gpu, num_gpu, config, debug=True, is_DDP=False, resume=Fal
         with torch.no_grad():
             total_loss, pred = model_forward(stage, 'output', curr_model, helper_dict, train_data, cfg, scalars_to_log, False)
             name = train_data['name']
-            if stage == '1-1':
-                normal_name = [n.format('normalest', 'h5') for n in name]
-                normal_pred = pred['normal']
-                threads = [threading.Thread(target=th_save_h5, args=(name, img,)) for name, img in zip(normal_name, normal_pred)]
-                for thread in threads:
-                    thread.start()
-                for thread in threads:
-                    thread.join()
+            normal_name = [n.format('normalest', 'h5') for n in name]
+            normal_pred = pred['normal']
+            threads = [threading.Thread(target=th_save_h5, args=(name, img,)) for name, img in zip(normal_name, normal_pred)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
 
-            elif stage == '1-2':
+            if stage == '1-2':
                 dl_name = [n.format('DLest', 'h5') for n in name]
                 dl_pred = pred['DL']
                 threads = [threading.Thread(target=th_save_h5, args=(name, img,)) for name, img in zip(dl_name, dl_pred)]

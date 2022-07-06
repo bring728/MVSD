@@ -16,61 +16,61 @@ import torch.nn.functional as F
 from torch.cuda.amp.autocast_mode import autocast
 from utils import *
 
+
 class Transformer(nn.Module):
-    def __init__(self, norm_layer, dim, dim_head, mlp_hidden, final_hidden):
+    def __init__(self, dim, dim_head, mlp_hidden, final_hidden):
         super().__init__()
-        self.norm = nn.LayerNorm
-        self.norm_1_1 = self.norm(dim)
-        self.to_v_1 = nn.Linear(dim, dim_head, bias=False)
-        self.to_out_1 = nn.Linear(dim_head * 2, dim)
+        self.to_v_1 = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, dim_head, bias=False)
+        )
+        self.to_out_1 = nn.Linear(dim_head * 3, dim)
 
-        self.norm_1_2 = self.norm(dim)
         self.net_1 = nn.Sequential(
+            nn.LayerNorm(dim),
             nn.Linear(dim, mlp_hidden),
             nn.GELU(),
             nn.Linear(mlp_hidden, dim),
         )
 
-        self.norm_2_1 = self.norm(dim)
-        self.to_v_2 = nn.Linear(dim, dim_head, bias=False)
-        self.to_out_2 = nn.Linear(dim_head * 2, dim)
+        self.to_v_2 = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.Linear(dim, dim_head, bias=False)
+        )
+        self.to_out_2 = nn.Linear(dim_head * 3, dim)
 
-        self.norm_2_2 = self.norm(dim)
         self.net_2 = nn.Sequential(
+            nn.LayerNorm(dim),
             nn.Linear(dim, mlp_hidden),
             nn.GELU(),
             nn.Linear(mlp_hidden, dim),
         )
 
-        self.mlp_final = nn.Sequential(
+        self.mlp_brdf = nn.Sequential(
             nn.LayerNorm(dim),
             nn.Linear(dim, final_hidden),
-            nn.GELU(),
-            nn.Linear(final_hidden, final_hidden),
             nn.GELU(),
             nn.Linear(final_hidden, final_hidden),
         )
 
     def forward(self, x_input, weight):
         b, h, w, n, _ = x_input.shape
-        v = self.to_v_1(self.norm_1_1(x_input))
+        v = self.to_v_1(x_input)
         mean, var = fused_mean_variance(v, weight, dim=-2)
-        x = self.to_out_1(torch.cat([mean, var], dim=-1)).expand(-1, -1, -1, n, -1)
+        x = self.to_out_1(torch.cat([v, torch.cat([mean, var], dim=-1).expand(-1, -1, -1, n, -1)], dim=-1))
+        x = x + x_input
+        x = self.net_1(x)
         x = x + x_input
 
-        x = self.net_1(self.norm_1_2(x))
-        x = x + x_input
-
-        v = self.to_v_2(self.norm_2_1(x))
+        v = self.to_v_2(x)
         mean, var = fused_mean_variance(v, weight, dim=-2)
-        x = self.to_out_2(torch.cat([mean, var], dim=-1))[..., 0, :]
+        x = self.to_out_2(torch.cat([v[..., :1, :], mean, var], dim=-1))[..., 0, :]
+        x = x + x_input[..., 0, :]
+        x = self.net_2(x)
         x = x + x_input[..., 0, :]
 
-        x = self.net_2(self.norm_2_2(x))
-        x = x + x_input[..., 0, :]
-
-        x = self.mlp_final(x)
-        return x
+        brdf_feature = self.mlp_brdf(x)
+        return brdf_feature
 
 
 # default tensorflow initialization of linear layers
@@ -98,35 +98,35 @@ class MultiViewAggregation(nn.Module):
         self.cfg = cfg
         self.activation = nn.ELU(inplace=True)
         if cfg.BRDF.aggregation.input == 'vector':
-            input_ch = 3 + 3 + cfg.DL.SGNum * 7
+            input_ch = 7
         else:
-            input_ch = 1 + cfg.DL.SGNum * 6
+            input_ch = 7
         if cfg.BRDF.refine.use:
             output_ch = 64
         else:
             output_ch = 4
         self.net_type = cfg.BRDF.aggregation.type
         hidden = cfg.BRDF.aggregation.pbr_hidden
-        self.pbr_mlp = nn.Sequential(nn.Linear(input_ch, hidden), self.activation,
+        self.pbr_mlp = nn.Sequential(nn.LayerNorm(input_ch),
+                                     nn.Linear(input_ch, hidden), self.activation,
                                      nn.Linear(hidden, hidden), self.activation,
                                      nn.Linear(hidden, hidden), self.activation,
                                      nn.Linear(hidden, cfg.BRDF.aggregation.pbr_feature_dim))
-        self.pbr_mlp.apply(weights_init)
+        # self.pbr_mlp.apply(weights_init)
         if self.net_type == 'mlp':
             self.perview_mlp = nn.Sequential(nn.Linear((cfg.BRDF.context_feature.dim + 3) * 3 + hidden, hidden), self.activation,
                                              nn.Linear(hidden, hidden), self.activation,
                                              nn.Linear(hidden, hidden), self.activation,
                                              nn.Linear(hidden, hidden), self.activation,
                                              nn.Linear(hidden, output_ch))
-            self.perview_mlp.apply(weights_init)
+            # self.perview_mlp.apply(weights_init)
         elif self.net_type == 'transformer':
-            input_ch = 3 + cfg.BRDF.aggregation.pbr_feature_dim
-            # input_ch = cfg.BRDF.context_feature.dim + 3 + cfg.BRDF.aggregation.pbr_feature_dim
-            self.transformer = Transformer(cfg.BRDF.aggregation.norm_layer, input_ch, cfg.BRDF.aggregation.head_dim,
+            input_ch = cfg.BRDF.context_feature.dim + 3 + cfg.BRDF.aggregation.pbr_feature_dim
+            self.transformer = Transformer(input_ch, cfg.BRDF.aggregation.head_dim,
                                            cfg.BRDF.aggregation.mlp_hidden, cfg.BRDF.aggregation.final_hidden)
 
-    def forward(self, rgb_feat, view_dir, proj_err, normal, DL):
-        bn, h, w, num_views, _ = rgb_feat.shape
+    def forward(self, rgb, featmaps_dense, view_dir, proj_err, normal, DL):
+        bn, h, w, num_views, _ = rgb.shape
         weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
         weight = weight / (torch.sum(weight, dim=-2, keepdim=True) + TINY_NUMBER)
 
@@ -138,13 +138,19 @@ class MultiViewAggregation(nn.Module):
             DL = DL.reshape((bn, h, w, 1, -1))
             pbr_batch = torch.cat([torch.cat([normal, DL], dim=-1).expand(-1, -1, -1, num_views, -1), view_dir], dim=-1)
         else:
-            DLdotN = torch.sum(DL[..., :3] * normal[:, :, :, :, None], dim=-1)
-            hdotV = (torch.sum(DL[..., :3] * view_dir[:, :, :, :, None], dim=-1) + 1) / 2
-            VdotN = torch.sum(view_dir * normal, dim=-1, keepdim=True)
-            sharp = DL[..., 3:4].reshape((bn, h, w, 1, -1))
-            intensity = DL[..., 4:].reshape((bn, h, w, 1, -1))
-            pbr_batch = torch.cat([torch.cat([DLdotN, sharp, intensity], dim=-1).expand(-1, -1, -1, num_views, -1), hdotV, VdotN], dim=-1)
-        pbr_feature = self.pbr_mlp(pbr_batch)
+            DLdotN = torch.sum(DL[..., :3] * normal[:, :, :, :, None], dim=-1, keepdim=True)
+            hdotV = (torch.sum(DL[..., :3] * view_dir[:, :, :, :, None], dim=-1, keepdim=True) + 1) / 2
+            fresnel = 0.05 + 0.95 * torch.pow(2.0, (-5.55472 * hdotV - 6.98316) * hdotV)
+
+            VdotN = torch.sum(view_dir * normal, dim=-1, keepdim=True).unsqueeze(-2).expand(-1, -1, -1, -1, self.cfg.DL.SGNum, -1)
+            pbr_batch = torch.cat([torch.cat([DLdotN, DL[..., 3:]], dim=-1).expand(-1, -1, -1, num_views, -1, -1), fresnel, VdotN], dim=-1)
+        # pbr_feature = self.pbr_mlp(pbr_batch).reshape(bn, h, w, num_views, -1)
+        if self.cfg.BRDF.aggregation.pbr_collect == 'max':
+            pbr_feature = torch.max(self.pbr_mlp(pbr_batch), dim=-2)[0]
+        elif self.cfg.BRDF.aggregation.pbr_collect == 'sum':
+            pbr_feature = torch.sum(self.pbr_mlp(pbr_batch), dim=-2)
+        else:
+            pbr_feature = None
 
         if self.net_type == 'mlp':
             mean, var = fused_mean_variance(rgb_feat, weight, dim=-2)
@@ -156,15 +162,7 @@ class MultiViewAggregation(nn.Module):
                 x = self.activation(x)
             else:
                 x = 0.5 * (torch.clamp(1.01 * torch.tanh(x), -1, 1) + 1)
-            # view_dir_var = torch.var(torch.cat([torch.arctan(view_dir[..., 1:2] / view_dir[..., :1]), torch.arccos(view_dir[..., 2:])], dim=-1),
-            #                          dim=-2, unbiased=False)
-            # weight_var = torch.var(weight, dim=-2, unbiased=False)
-            # return torch.cat([x, view_dir_var, weight_var], dim=-1)
         else:
-            rgb_feat_pbr = torch.cat([rgb_feat, pbr_feature], dim=-1)
-            x = self.transformer(rgb_feat_pbr, weight)
-            # if self.cfg.BRDF.refine.use:
-            #     x = self.activation(x)
-            # else:
-            #     x = 0.5 * (torch.clamp(1.01 * torch.tanh(x), -1, 1) + 1)
-        return x
+            rgb_feat_pbr = torch.cat([rgb, featmaps_dense.expand(-1, -1, -1, num_views, -1), pbr_feature], dim=-1)
+            brdf_feature = self.transformer(rgb_feat_pbr, weight)
+        return brdf_feature

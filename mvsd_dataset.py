@@ -55,6 +55,8 @@ class Openrooms_FF(Dataset):
         name_list = [scene + '{}_' + a + '.{}' for a in all_idx]
         batchDict['name'] = name_list[0]
         cam_mats = np.load(scene + 'cam_mats.npy')
+        if not cam_mats.shape == (3, 6, 9):
+            raise Exception(scene, ' cam mat shape error!')
 
         target_im = loadHdr(name_list[0].format('im', 'rgbe'))
         seg = loadImage(name_list[0].format('immask', 'png'))[0:1, :, :]
@@ -70,7 +72,8 @@ class Openrooms_FF(Dataset):
         rgb_list = []
         depthest_list = []
         depthgt_list = []
-        conf_list = []
+        # conf_list = []
+        conf = loadBinary(name_list[0].format('conf', 'dat'))
         depth_norm_list = []
         for name, idx in zip(name_list, all_idx):
             idx = int(idx) - 1
@@ -82,18 +85,21 @@ class Openrooms_FF(Dataset):
             h, w, f = poses_hwf_bounds[:, -2]
             intrinsic = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], dtype=float)
             src_int_list.append(intrinsic)
-            conf_list.append(loadBinary(name.format('conf', 'dat')))
+            # conf_list.append(loadBinary(name.format('conf', 'dat')))
             depthest = loadBinary(name.format('depthest', 'dat'))
             depthest_list.append(depthest)
-            depthgt = loadBinary(name.format('imdepth', 'dat'))
-            depthgt_list.append(depthgt)
+            if self.cfg.BRDF.gt:
+                depthgt = loadBinary(name.format('imdepth', 'dat'))
+                depthgt_list.append(depthgt)
             depth_norm = np.clip(depthest / poses_hwf_bounds[1, -1], 0, 1)
             depth_norm_list.append(depth_norm)
 
         batchDict['rgb'] = np.stack(rgb_list, 0).astype(np.float32)
         batchDict['depth_est'] = np.stack(depthest_list, 0).astype(np.float32)
-        batchDict['depth_gt'] = np.stack(depthgt_list, 0).astype(np.float32)
-        batchDict['conf'] = np.stack(conf_list, 0).astype(np.float32)
+        if self.cfg.BRDF.gt:
+            batchDict['depth_gt'] = np.stack(depthgt_list, 0).astype(np.float32)
+        # batchDict['conf'] = np.stack(conf_list, 0).astype(np.float32)
+        batchDict['conf'] = conf.astype(np.float32)
         batchDict['depth_norm'] = np.stack(depth_norm_list, 0).astype(np.float32)
         batchDict['cam'] = np.stack(src_int_list, 0).astype(np.float32)
         # recenter to cam_0
@@ -102,8 +108,8 @@ class Openrooms_FF(Dataset):
 
         # normal_est = loadH5(name_list[0].format('normalest', 'h5'))
         # batchDict['normal'] = normal_est
-        # DL = loadH5(name_list[0].format('DLest', 'h5'))
-        # batchDict['DL'] = DL
+        DL = loadH5(name_list[0].format('DLest', 'h5'))
+        batchDict['DL'] = DL
 
         if self.stage == '2':
             albedo = loadImage(name_list[0].format('imbaseColor', 'png'))
