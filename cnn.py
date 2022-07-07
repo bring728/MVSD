@@ -96,10 +96,10 @@ class upconv(nn.Module):
 class ResUNet(nn.Module):
     def __init__(self, cfg):
         super(ResUNet, self).__init__()
-        filters = [64, 128, 256, 512]
+        filters = [64, 128, 256, 512, 1024]
 
         # original
-        layers = [3, 4, 6, 3]
+        layers = [3, 4, 4, 3, 2]
         norm_layer = nn.InstanceNorm2d
         self._norm_layer = norm_layer
         self.dilation = 1
@@ -119,9 +119,12 @@ class ResUNet(nn.Module):
         self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer5 = self._make_layer(block, 512, layers[4], stride=2, dilate=replace_stride_with_dilation[1])
 
         # decoder
+        self.upconv5 = upconv(filters[4], filters[3], 3, 2)
+        self.iconv5 = conv(filters[3] + filters[3], filters[3], 3, 1)
         self.upconv4 = upconv(filters[3], filters[2], 3, 2)
         self.iconv4 = conv(filters[2] + filters[2], filters[2], 3, 1)
         self.upconv3 = upconv(filters[2], filters[1], 3, 2)
@@ -195,17 +198,19 @@ class ResUNet(nn.Module):
 
 
 def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride=1, num_group=4, act='relu', norm_layer='group'):
+    act = act.lower()
+    pad_type = pad_type.lower()
+    norm_layer = norm_layer.lower()
     layers = []
     if pad_type == 'rep':
-        layers.append(
-            nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel, stride=stride, bias=norm_layer != 'batch',
-                      padding_mode='replicate', padding=padding))
+        padding_mode = 'replicate'
     elif pad_type == 'zeros':
-        layers.append(
-            nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel, stride=stride, bias=norm_layer != 'batch',
-                      padding_mode='zeros', padding=padding))
+        padding_mode = 'zeros'
     else:
         assert 'not implemented pad'
+    layers.append(
+        nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel, stride=stride, bias=norm_layer != 'batch',
+                  padding_mode=padding_mode, padding=padding))
 
     if norm_layer == 'group':
         layers.append(nn.GroupNorm(num_groups=num_group, num_channels=out_ch))

@@ -148,7 +148,11 @@ class Openrooms_FF_single(Dataset):
         idx_list = list(range(1, cfg.num_view_all + 1))
         self.idx_list = list(map(str, idx_list))
         self.nameList = []
+        self.maxdepthList = np.array([])
         for scene in sceneList:
+            cam_mats = np.load(osp.join(dataRoot, scene + 'cam_mats.npy'))
+            max_depth = cam_mats[1, -1]
+            self.maxdepthList = np.concatenate([self.maxdepthList, max_depth])
             # self.nameList += [scene + '{}_' + f'{i}' + '.{}' for i in idx_list]
             self.nameList += [scene + '$' + i for i in self.idx_list]
         # self.nameList = np.array(self.nameList).astype(np.string_)
@@ -160,9 +164,10 @@ class Openrooms_FF_single(Dataset):
     def __getitem__(self, ind):
         batchDict = {}
         scene, target_idx = self.nameList[ind].split('$')
+        max_depth = self.maxdepthList[ind]
         scene = osp.join(self.dataRoot, scene)
-        cam_mats = np.load(scene + 'cam_mats.npy')
-        max_depth = cam_mats[1, -1, int(target_idx) - 1]
+        # cam_mats = np.load(scene + 'cam_mats.npy')
+        # max_depth = cam_mats[1, -1, int(target_idx) - 1]
         name = osp.join(scene + '{}_' + target_idx + '.{}')
         # name = osp.join(self.dataRoot, str(self.nameList[ind], encoding='utf-8'))
         # name = osp.join(self.dataRoot, self.nameList[ind])
@@ -191,8 +196,6 @@ class Openrooms_FF_single(Dataset):
             batchDict['normal_gt'] = normal
 
         elif self.stage == '1-2':
-            # normal_est = loadH5(name.format('normalest', 'h5'))
-            # batchDict['normal'] = normal_est
             envmaps, envmapsInd = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
                                              self.cfg.DL.env_rows,
                                              self.cfg.DL.env_cols)

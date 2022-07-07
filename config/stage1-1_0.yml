@@ -1,6 +1,6 @@
 nepoch: 60
 batchsize: 16
-num_workers: 10
+num_workers: 12
 lr: 1e-4
 lrate_decay_steps: 5000
 lrate_decay_factor: 1.0

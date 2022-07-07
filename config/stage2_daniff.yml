@@ -20,13 +20,14 @@ DL:
 
 
 BRDF:
-  except_feature: True
-  gt: True
+  gt: False
   lambda_albedo: 3.0
   lambda_rough: 1.0
   lambda_conf: 0.2
 
   context_feature:
+#    arch: resunet
+    arch: unet
     input: rgbdc
     dim: 32
     norm_layer: group

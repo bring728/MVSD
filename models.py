@@ -100,7 +100,6 @@ class MonoDirectLightModel(object):
         device = torch.device('cuda:{}'.format(gpu))
 
         root = osp.dirname(osp.dirname(experiment))
-
         self.normal_net = NormalNet(cfg.normal).to(device)
         if self.is_DDP:
             normal_ckpt = torch.load(osp.join(osp.join(root, 'stage1-1', cfg.normal.path), 'model_normal_latest.pth'),
@@ -270,8 +269,12 @@ class BRDFModel(object):
         self.DL_net.eval()
 
         # create feature extraction network
-        # self.feature_net = ResUNet(cfg.BRDF.context_feature).to(device)
-        self.feature_net = BRDFContextNet(cfg.BRDF.context_feature).to(device)
+        if cfg.BRDF.context_feature.arch == 'resunet':
+            self.feature_net = ResUNet(cfg.BRDF.context_feature).to(device)
+        elif cfg.BRDF.context_feature.arch == 'unet':
+            self.feature_net = BRDFContextNet(cfg.BRDF.context_feature).to(device)
+        else:
+            raise Exception('arch error')
         self.brdf_net = MultiViewAggregation(cfg).to(device)
         if cfg.BRDF.refine.use:
             self.brdf_refine_net = BRDFRefineNet(cfg).to(device)

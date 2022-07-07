@@ -35,5 +35,3 @@ if __name__ == '__main__':
                 #     os.remove(pfm)
                 for pfm in glob.glob(osp.join(scene, f'{k}_poses_bounds.npy')):
                     os.remove(pfm)
-                for pfm in glob.glob(osp.join(scene, f'{k}_cam_mats.npy')):
-                    os.remove(pfm)
