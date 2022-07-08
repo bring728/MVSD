@@ -1,4 +1,8 @@
 import os
+import cv2
+
+import numpy as np
+
 from mlp import *
 from cnn import *
 import os.path as osp
@@ -201,37 +205,44 @@ class SG2env():
 
         self.SGNum = SGNum
 
-        device = torch.device('cuda:{}'.format(gpu))
-        self.ls = self.ls.to(device)
+        if gpu >= 0:
+            device = torch.device('cuda:{}'.format(gpu))
+            self.ls = self.ls.to(device)
         self.ls.requires_grad = False
 
     # Turn SG parameters to environmental maps
-    def fromSGtoIm(self, axis, sharp, intensity, vis):
-        bn, _1, _2, envRow, envCol = axis.size()
-
+    def fromSGtoIm(self, axis, sharp, intensity):
         axis = axis[..., None, None]
         intensity = intensity[..., None, None]
-        sharp = sharp.reshape(bn, self.SGNum, 1, envRow, envCol, 1, 1)
+        sharp = sharp[..., None, None]
 
         mi = sharp * (torch.sum(axis * self.ls, dim=2, keepdim=True) - 1)
-
-        if vis is None:
-            envmaps = intensity * torch.exp(mi)
-        else:
-            vis = vis.reshape(bn, self.SGNum, 1, envRow, envCol, 1, 1)
-            envmaps = vis * intensity * torch.exp(mi)
-
+        envmaps = intensity * torch.exp(mi)
         envmaps = torch.sum(envmaps, dim=1)
         return envmaps
 
-    def forward(self, axis, sharpOrig, intensityOrig, vis):
+    def SG_ldr2hdr(self, sharpOrig, intensityOrig):
+        intensity = 0.999 * intensityOrig
+        intensity = torch.tan(np.pi / 2 * intensity)
+        sharp = 0.999 * sharpOrig
+        sharp = torch.tan(np.pi / 2 * sharp)
+        return sharp, intensity
+
+
+    def forward_test(self, axis, sharpOrig, intensityOrig, vis):
         intensity = 0.999 * intensityOrig
         intensity = torch.tan(np.pi / 2 * intensity)
 
         sharp = 0.999 * sharpOrig
         sharp = torch.tan(np.pi / 2 * sharp)
 
-        envmaps = self.fromSGtoIm(axis, sharp, intensity, vis)
+        mi = sharp[..., None, None, None] * (torch.sum(axis[..., None, None] * self.ls[0, :, :, 0, 0], dim=1, keepdim=True) - 1)
+
+        envmaps = intensity[..., None, None, None] * torch.exp(mi)
+        envmaps = torch.sum(envmaps, dim=0)
+        a = cv2fromtorch(envmaps)
+        cv2.imshow('asdf', a)
+        cv2.waitKey(0)
         return envmaps
 
 
@@ -369,3 +380,22 @@ class BRDFModel(object):
             print('No ckpts found, training from scratch...')
             step = 0
         return int(step)
+
+
+
+if __name__ == '__main__':
+    sg2env = SG2env(4, envWidth=16, envHeight=8, gpu=-1)
+    Az = ((np.arange(16) + 0.5) / 16 - 0.5) * 2 * np.pi
+    El = ((np.arange(8) + 0.5) / 8) * np.pi / 2.0
+    Az, El = np.meshgrid(Az, El)
+    Az = Az[np.newaxis, :, :]
+    El = El[np.newaxis, :, :]
+    lx = np.sin(El) * np.cos(Az)
+    ly = np.sin(El) * np.sin(Az)
+    lz = np.cos(El)
+    ls = np.concatenate((lx, ly, lz), axis=0)
+
+    axis = torch.from_numpy(np.stack([ls[:, 2, 4], ls[:, 4, 4], ls[:, 2, 8], ls[:, 4, 8]], axis=0))
+    sharp = torch.from_numpy(np.array([0.0, 0.1, 0.2, 0.9]))
+    intensity = torch.from_numpy(np.array([0.0, 0.0, 0.0, 0.2]))
+    sg2env.forward_test(axis, sharp, intensity, None)

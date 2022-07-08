@@ -101,10 +101,6 @@ class MultiViewAggregation(nn.Module):
             input_ch = 7
         else:
             input_ch = 7
-        if cfg.BRDF.refine.use:
-            output_ch = 64
-        else:
-            output_ch = 4
         self.net_type = cfg.BRDF.aggregation.type
         hidden = cfg.BRDF.aggregation.pbr_hidden
         self.pbr_mlp = nn.Sequential(nn.LayerNorm(input_ch),
@@ -112,18 +108,10 @@ class MultiViewAggregation(nn.Module):
                                      nn.Linear(hidden, hidden), self.activation,
                                      nn.Linear(hidden, hidden), self.activation,
                                      nn.Linear(hidden, cfg.BRDF.aggregation.pbr_feature_dim))
-        # self.pbr_mlp.apply(weights_init)
-        if self.net_type == 'mlp':
-            self.perview_mlp = nn.Sequential(nn.Linear((cfg.BRDF.context_feature.dim + 3) * 3 + hidden, hidden), self.activation,
-                                             nn.Linear(hidden, hidden), self.activation,
-                                             nn.Linear(hidden, hidden), self.activation,
-                                             nn.Linear(hidden, hidden), self.activation,
-                                             nn.Linear(hidden, output_ch))
-            # self.perview_mlp.apply(weights_init)
-        elif self.net_type == 'transformer':
-            input_ch = cfg.BRDF.context_feature.dim + 3 + cfg.BRDF.aggregation.pbr_feature_dim
-            self.transformer = Transformer(input_ch, cfg.BRDF.aggregation.head_dim,
-                                           cfg.BRDF.aggregation.mlp_hidden, cfg.BRDF.aggregation.final_hidden)
+
+        input_ch = cfg.BRDF.context_feature.dim + 3 + cfg.BRDF.aggregation.pbr_feature_dim
+        self.transformer = Transformer(input_ch, cfg.BRDF.aggregation.head_dim,
+                                       cfg.BRDF.aggregation.mlp_hidden, cfg.BRDF.aggregation.final_hidden)
 
     def forward(self, rgb, featmaps_dense, view_dir, proj_err, normal, DL):
         bn, h, w, num_views, _ = rgb.shape
@@ -140,7 +128,7 @@ class MultiViewAggregation(nn.Module):
         else:
             DLdotN = torch.sum(DL[..., :3] * normal[:, :, :, :, None], dim=-1, keepdim=True)
             hdotV = (torch.sum(DL[..., :3] * view_dir[:, :, :, :, None], dim=-1, keepdim=True) + 1) / 2
-            fresnel = 0.05 + 0.95 * torch.pow(2.0, (-5.55472 * hdotV - 6.98316) * hdotV)
+            fresnel = torch.pow(2.0, (-5.55472 * hdotV - 6.98316) * hdotV)
 
             VdotN = torch.sum(view_dir * normal, dim=-1, keepdim=True).unsqueeze(-2).expand(-1, -1, -1, -1, self.cfg.DL.SGNum, -1)
             pbr_batch = torch.cat([torch.cat([DLdotN, DL[..., 3:]], dim=-1).expand(-1, -1, -1, num_views, -1, -1), fresnel, VdotN], dim=-1)
@@ -152,17 +140,6 @@ class MultiViewAggregation(nn.Module):
         else:
             pbr_feature = None
 
-        if self.net_type == 'mlp':
-            mean, var = fused_mean_variance(rgb_feat, weight, dim=-2)
-            globalfeat = torch.cat([mean, var], dim=-1)
-            x = torch.cat([globalfeat.expand(-1, -1, -1, num_views, -1), rgb_feat, pbr_feature], dim=-1)
-            x = self.perview_mlp(x)
-            x = fused_mean(x, weight, dim=-2).squeeze(-2)
-            if self.cfg.BRDF.refine.use:
-                x = self.activation(x)
-            else:
-                x = 0.5 * (torch.clamp(1.01 * torch.tanh(x), -1, 1) + 1)
-        else:
-            rgb_feat_pbr = torch.cat([rgb, featmaps_dense.expand(-1, -1, -1, num_views, -1), pbr_feature], dim=-1)
-            brdf_feature = self.transformer(rgb_feat_pbr, weight)
+        rgb_feat_pbr = torch.cat([rgb, featmaps_dense.expand(-1, -1, -1, num_views, -1), pbr_feature], dim=-1)
+        brdf_feature = self.transformer(rgb_feat_pbr, weight)
         return brdf_feature

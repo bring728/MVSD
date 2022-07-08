@@ -11,6 +11,7 @@ normal:
   norm_layer: group
 
 DL:
+  scale_inv: False
   unified_decoder: False
   norm_layer: batch
   SGNum: 4

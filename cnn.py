@@ -370,9 +370,10 @@ class DirectLightingNet(nn.Module):
         sharp = torch.clamp(sharp, 0, 1)
         sharp = sharp.view(bn, self.SGNum, 1, row, col)
 
-        vis = 0.5 * (1.2 * vis_out + 1)
+        vis = 0.5 * (1.01 * vis_out + 1)
         vis = torch.clamp(vis, 0, 1)
         vis = vis.view(bn, self.SGNum, 1, row, col)
+        intensity = intensity * vis
         return axis, sharp, intensity, vis
 
 

@@ -37,27 +37,25 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 pred['normal'] = curr_model.normal_net(data['input'])
             rgbdcn = torch.cat([data['input'], 0.5 * (pred['normal'] + 1)], dim=1)
             axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
-            if phase == 'output':
-                bn, _, _, rows, cols = axis.shape
-                DL_pred = torch.cat([axis, sharpness, intensity * vis], dim=2).reshape((bn, -1, rows, cols))
-                pred['DL'] = DL_pred
-            else:
-                segBRDF = F.adaptive_avg_pool2d(data['mask'][:, :1, ...], (cfg.DL.env_rows, cfg.DL.env_cols))
-                notDarkEnv = (torch.mean(data['envmaps_gt'], dim=(1, 4, 5)) > 0.001).float()[:, None]
-                segEnvBatch = (segBRDF * data['envmapsInd'])[..., None, None]
-                segEnvBatch = (segEnvBatch * notDarkEnv[..., None, None]).expand_as(data['envmaps_gt'])
+            sharpness_hdr, intensity_hdr = helper_dict['sg2env'].SG_ldr2hdr(sharpness, intensity)
+            envmaps_pred = helper_dict['sg2env'].fromSGtoIm(axis, sharpness_hdr, intensity_hdr)
+            pred['envmaps'] = envmaps_pred
 
-                envmaps_pred = helper_dict['sg2env'].forward(axis, sharpness, intensity, vis)
-                pred['envmaps'] = envmaps_pred
+            segBRDF = F.adaptive_avg_pool2d(data['mask'][:, :1, ...], (cfg.DL.env_rows, cfg.DL.env_cols))
+            # notDarkEnv = (torch.mean(data['envmaps_gt'], dim=(1, 4, 5)) > 0.001).float()[:, None]
+            # segEnvBatch = (segBRDF * notDarkEnv)[..., None, None].expand_as(data['envmaps_gt'])
+            segEnvBatch = segBRDF[..., None, None].expand_as(data['envmaps_gt'])
+            if cfg.DL.scale_inv:
                 envmaps_pred_scaled = LSregress(envmaps_pred.detach() * segEnvBatch, data['envmaps_gt'] * segEnvBatch, envmaps_pred)
-
-                env_scaled_loss = img2log_mse(envmaps_pred_scaled, data['envmaps_gt'], segEnvBatch)
-                vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
-                # vis_beta_loss = torch.mean(torch.log10(0.1 + vis) + torch.log10(0.1 + 1. - vis) + 1.)
-                scalars_to_log['train/env_scaled_loss'] = env_scaled_loss.item()
-                scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
-                total_loss = cfg.lambda_vis_prior * vis_beta_loss + env_scaled_loss
-                scalars_to_log['train/total_loss'] = total_loss.item()
+                env_loss = img2log_mse(envmaps_pred_scaled, data['envmaps_gt'], segEnvBatch)
+                scalars_to_log['train/env_scaled_loss'] = env_loss.item()
+            else:
+                env_loss = img2log_mse(envmaps_pred, data['envmaps_gt'], segEnvBatch)
+                scalars_to_log['train/env_msle_loss'] = env_loss.item()
+            vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
+            # vis_beta_loss = torch.mean(torch.log10(0.1 + vis) + torch.log10(0.1 + 1. - vis) + 1.)
+            scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
+            total_loss = cfg.lambda_vis_prior * vis_beta_loss + env_loss
 
         elif stage == '2':
             sample_view(data, 7 + np.random.choice(3, 1)[0], gt=cfg.BRDF.gt)
@@ -66,17 +64,18 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             with torch.no_grad():
                 data['normal'] = curr_model.normal_net(target_rgbdc)
                 rgbdcn = torch.cat([target_rgbdc, 0.5 * (data['normal'] + 1)], dim=1)
-                axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
+                axis, sharpness, intensity = curr_model.DL_net(rgbdcn)
+                sharpness_hdr, intensity_hdr = helper_dict['sg2env'].SG_ldr2hdr(sharpness, intensity)
                 bn, _, _, rows, cols = axis.shape
-                DL_pred = torch.cat([axis, sharpness, intensity * vis], dim=2).reshape((bn, -1, rows, cols))
-                data['DL'] = DL_pred
+                data['DL'] = torch.cat([axis, sharpness_hdr, intensity_hdr], dim=2).reshape((bn, -1, rows, cols))
+
+            if save_image_flag:
+                DL = data['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
+                envmaps_pred = helper_dict['sg2env'].fromSGtoIm(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:])
+                data['envmaps'] = envmaps_pred
 
             pixels = helper_dict['pixels']
             pixels_norm = helper_dict['pixels_norm']
-            if save_image_flag:
-                DL = data['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
-                envmaps_pred = helper_dict['sg2env'].forward(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:], None)
-                data['envmaps'] = envmaps_pred
             bn, vn, _, h, w = data['rgb'].shape
             if cfg.BRDF.context_feature.input == 'rgbdc':
                 featmaps = curr_model.feature_net(target_rgbdc)
@@ -104,8 +103,8 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             segBRDF = data['mask'][:, :1]
             albedo_pred_refined = brdf_refined[0]
             rough_pred_refined = brdf_refined[1]
-            if torch.sum(torch.isnan(rough_pred_refined)) > 0:
-                raise Exception('nan..')
+            # if torch.sum(torch.isnan(rough_pred_refined)) > 0:
+            #     raise Exception('nan..')
             pred['rough'] = rough_pred_refined
             pred['conf'] = torch.ones_like(rough_pred_refined)
 

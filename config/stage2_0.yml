@@ -26,8 +26,8 @@ BRDF:
   lambda_conf: 0.2
 
   context_feature:
-    arch: resunet
-#    arch: unet
+#    arch: resunet
+    arch: unet
     input: rgbdc
     dim: 32
     norm_layer: group
