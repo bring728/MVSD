@@ -52,10 +52,13 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             else:
                 env_loss = img2log_mse(envmaps_pred, data['envmaps_gt'], segEnvBatch)
                 scalars_to_log['train/env_msle_loss'] = env_loss.item()
-            vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
-            # vis_beta_loss = torch.mean(torch.log10(0.1 + vis) + torch.log10(0.1 + 1. - vis) + 1.)
-            scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
-            total_loss = cfg.lambda_vis_prior * vis_beta_loss + env_loss
+
+            total_loss = env_loss
+            if cfg.lambda_vis_prior > 0:
+                vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
+                # vis_beta_loss = torch.mean(torch.log10(0.1 + vis) + torch.log10(0.1 + 1. - vis) + 1.)
+                scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
+                total_loss += cfg.lambda_vis_prior * vis_beta_loss
 
         elif stage == '2':
             sample_view(data, 7 + np.random.choice(3, 1)[0], gt=cfg.BRDF.gt)
