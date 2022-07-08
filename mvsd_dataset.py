@@ -198,10 +198,11 @@ class Openrooms_FF_single(Dataset):
             batchDict['normal_gt'] = normal
 
         elif self.stage == '1-2':
-            envmaps = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
+            envmaps, envmapsInd = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
                                              self.cfg.DL.env_rows, self.cfg.DL.env_cols)
             envmaps = envmaps * scene_scale
             batchDict['envmaps_gt'] = envmaps.astype(np.float32)
+            batchDict['envmapsInd'] = envmapsInd
         return batchDict
 
 # class Openrooms_LMDB_single(Dataset):
