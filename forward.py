@@ -63,19 +63,17 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
         elif stage == '2':
             sample_view(data, 7 + np.random.choice(3, 1)[0], gt=cfg.BRDF.gt)
             target_rgbdc = torch.cat([data['rgb'][:, 0], data['depth_norm'][:, 0], data['conf']], dim=1)
-            bn, _, rows, cols = target_rgbdc.shape
             with torch.no_grad():
                 data['normal'] = curr_model.normal_net(target_rgbdc)
                 rgbdcn = torch.cat([target_rgbdc, 0.5 * (data['normal'] + 1)], dim=1)
-                axis, sharpness, intensity = curr_model.DL_net(rgbdcn)
+                axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
                 sharpness_hdr, intensity_hdr = helper_dict['sg2env'].SG_ldr2hdr(sharpness, intensity)
                 bn, _, _, rows, cols = axis.shape
                 data['DL'] = torch.cat([axis, sharpness_hdr, intensity_hdr], dim=2).reshape((bn, -1, rows, cols))
 
             if save_image_flag:
                 DL = data['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
-                envmaps_pred = helper_dict['sg2env'].fromSGtoIm(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:])
-                data['envmaps'] = envmaps_pred
+                data['envmaps'] = helper_dict['sg2env'].fromSGtoIm(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:])
 
             pixels = helper_dict['pixels']
             pixels_norm = helper_dict['pixels_norm']

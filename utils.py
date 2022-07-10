@@ -212,9 +212,7 @@ def loadEnvmap(envName, env_height, env_width, env_rows, env_cols):
         scale = envHeightOrig / env_height
         if scale > 1:
             env = block_reduce(env, block_size=(1, 1, 1, 2, 2), func=np.mean)
-        envInd = np.ones([1, 1, 1], dtype=np.float32)
-        return env, envInd
-
+        return env
     else:
         raise Exception('env does not exist')
 

@@ -101,7 +101,6 @@ class MultiViewAggregation(nn.Module):
             input_ch = 7
         else:
             input_ch = 7
-        self.net_type = cfg.BRDF.aggregation.type
         hidden = cfg.BRDF.aggregation.pbr_hidden
         self.pbr_mlp = nn.Sequential(nn.LayerNorm(input_ch),
                                      nn.Linear(input_ch, hidden), self.activation,

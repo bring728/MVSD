@@ -150,14 +150,15 @@ class Openrooms_FF_single(Dataset):
         self.nameList = []
         # saving maxdepth array in ram is very slow...
         # maybe saving floating array is difficult for computer.
-        # self.maxdepthList = np.array([])
+        self.maxdepthList = np.array([])
         for scene in sceneList:
-            # cam_mats = np.load(osp.join(dataRoot, scene + 'cam_mats.npy'))
-            # max_depth = cam_mats[1, -1]
-            # self.maxdepthList = np.concatenate([self.maxdepthList, max_depth])
+            cam_mats = np.load(osp.join(dataRoot, scene + 'cam_mats.npy'))
+            max_depth = cam_mats[1, -1]
+            self.maxdepthList = np.concatenate([self.maxdepthList, max_depth])
             # self.nameList += [scene + '{}_' + f'{i}' + '.{}' for i in idx_list]
             self.nameList += [scene + '$' + i for i in self.idx_list]
         # self.nameList = np.array(self.nameList).astype(np.string_)
+        self.maxdepthList = self.maxdepthList.astype(np.float32)
         self.length = len(self.nameList)
 
     def __len__(self):
@@ -167,10 +168,10 @@ class Openrooms_FF_single(Dataset):
         batchDict = {}
         scene, target_idx = self.nameList[ind].split('$')
         scene = osp.join(self.dataRoot, scene)
-        cam_mats = np.load(scene + 'cam_mats.npy')
-        max_depth = cam_mats[1, -1, int(target_idx) - 1]
+        # cam_mats = np.load(scene + 'cam_mats.npy')
+        # max_depth = cam_mats[1, -1, int(target_idx) - 1]
         name = osp.join(scene + '{}_' + target_idx + '.{}')
-        # max_depth = self.maxdepthList[ind]
+        max_depth = self.maxdepthList[ind]
         # name = osp.join(self.dataRoot, str(self.nameList[ind], encoding='utf-8'))
         # name = osp.join(self.dataRoot, self.nameList[ind])
         batchDict['name'] = name
@@ -198,11 +199,10 @@ class Openrooms_FF_single(Dataset):
             batchDict['normal_gt'] = normal
 
         elif self.stage == '1-2':
-            envmaps, envmapsInd = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
+            envmaps = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
                                              self.cfg.DL.env_rows, self.cfg.DL.env_cols)
             envmaps = envmaps * scene_scale
             batchDict['envmaps_gt'] = envmaps.astype(np.float32)
-            batchDict['envmapsInd'] = envmapsInd
         return batchDict
 
 # class Openrooms_LMDB_single(Dataset):

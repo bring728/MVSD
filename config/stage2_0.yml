@@ -1,15 +1,15 @@
 nepoch: 10
 batchsize: 2
-num_workers: 8
+num_workers: 10
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
 
 normal:
-  path: None
+  path: 07062049_stage1-1
   norm_layer: group
 
 DL:
-  path: None
+  path: 07082120_stage1-2
   unified_decoder: False
   norm_layer: batch
   SGNum: 4
@@ -38,7 +38,6 @@ BRDF:
     pbr_hidden: 32
     input: dot
     pbr_feature_dim: 8
-    type: transformer
     norm_layer: layer
     head_dim: 16
     mlp_hidden: 16

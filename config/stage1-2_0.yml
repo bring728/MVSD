@@ -4,7 +4,7 @@ num_workers: 14
 lr: 1e-4
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
-lambda_vis_prior: 0.0
+lambda_vis_prior: 0.001
 
 normal:
   path: 07062049_stage1-1
