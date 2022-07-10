@@ -1,6 +1,6 @@
 #!/bin/bash
 
-python3 ~/PycharmProjects/MVSD/stage_train_DDP_wrapper.py 4 'stage2_daniff.yml'
+python3 ~/PycharmProjects/MVSD/stage_train_DDP_wrapper.py 4 'stage2_1.yml'
 wait
 
 python3 ~/PycharmProjects/MVSD/stage_train_DDP_wrapper.py 4 'stage2_0.yml'

@@ -96,7 +96,7 @@ class upconv(nn.Module):
 class ResUNet(nn.Module):
     def __init__(self, cfg):
         super(ResUNet, self).__init__()
-        filters = [64, 128, 256, 512, 1024]
+        filters = [128, 256, 512, 1024]
 
         # original
         layers = [3, 4, 4, 3, 2]
@@ -116,15 +116,12 @@ class ResUNet(nn.Module):
                                    bias=False, padding_mode='reflect')
         self.bn1 = norm_layer(self.inplanes, track_running_stats=False, affine=True)
         self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[1])
-        self.layer5 = self._make_layer(block, 512, layers[4], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer1 = self._make_layer(block, filters[0], layers[0], stride=2)
+        self.layer2 = self._make_layer(block, filters[1], layers[1], stride=2, dilate=replace_stride_with_dilation[0])
+        self.layer3 = self._make_layer(block, filters[2], layers[2], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer4 = self._make_layer(block, filters[3], layers[3], stride=2, dilate=replace_stride_with_dilation[1])
 
         # decoder
-        self.upconv5 = upconv(filters[4], filters[3], 3, 2)
-        self.iconv5 = conv(filters[3] + filters[3], filters[3], 3, 1)
         self.upconv4 = upconv(filters[3], filters[2], 3, 2)
         self.iconv4 = conv(filters[2] + filters[2], filters[2], 3, 1)
         self.upconv3 = upconv(filters[2], filters[1], 3, 2)
