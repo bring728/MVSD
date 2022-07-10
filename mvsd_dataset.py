@@ -153,6 +153,8 @@ class Openrooms_FF_single(Dataset):
         self.maxdepthList = np.array([])
         for scene in sceneList:
             cam_mats = np.load(osp.join(dataRoot, scene + 'cam_mats.npy'))
+            if not cam_mats.shape == (3, 6, 9):
+                raise Exception(scene, ' cam mat shape error!')
             max_depth = cam_mats[1, -1]
             self.maxdepthList = np.concatenate([self.maxdepthList, max_depth])
             # self.nameList += [scene + '{}_' + f'{i}' + '.{}' for i in idx_list]
