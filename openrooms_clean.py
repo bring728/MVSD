@@ -2,7 +2,7 @@ import os
 import glob
 import os.path as osp
 
-datapath = '/new_disk/happily/Data/OpenRooms_FF/'
+datapath = '/home/happily/Data/OpenRooms_FF/'
 if __name__ == '__main__':
     all_scene = []
     mvs_list = []

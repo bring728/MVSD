@@ -36,8 +36,11 @@ class Openrooms_FF(Dataset):
         self.matrixList = []
         for scene in sceneList:
             # self.nameList += [scene + '{}_' + f'{i + 1}' + '.{}' for i in idx_list]
-            self.nameList += [scene + '$' + i for i in self.idx_list]
-            # self.matrixList.append(np.load(osp.join(dataRoot, scene + 'poses_bounds.npy'))[:3, :5, :])
+            if phase == 'TRAIN':
+                self.nameList += [scene + '$' + i for i in self.idx_list]
+            elif phase == 'TEST':
+                self.nameList += [scene + '$5']
+        # self.matrixList.append(np.load(osp.join(dataRoot, scene + 'poses_bounds.npy'))[:3, :5, :])
         # self.matrixList = np.stack(self.matrixList)
         self.length = len(self.nameList)
 
