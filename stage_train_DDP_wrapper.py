@@ -15,7 +15,6 @@ if __name__ == '__main__':
     else:
         num_gpu = int(sys.argv[1])
         config = sys.argv[2]
-
     is_DDP = True
     debug = False
     phase = 'TRAIN'
