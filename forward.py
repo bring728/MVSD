@@ -54,11 +54,10 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 scalars_to_log['train/env_msle_loss'] = env_loss.item()
 
             total_loss = env_loss
-            if cfg.lambda_vis_prior > 0:
-                vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
-                # vis_beta_loss = torch.mean(torch.log10(0.1 + vis) + torch.log10(0.1 + 1. - vis) + 1.)
-                scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
-                total_loss += cfg.lambda_vis_prior * vis_beta_loss
+            vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
+            # vis_beta_loss = torch.mean(torch.log10(0.1 + vis) + torch.log10(0.1 + 1. - vis) + 1.)
+            scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
+            total_loss += cfg.lambda_vis_prior * vis_beta_loss
 
         elif stage == '2':
             sample_view(data, 7 + np.random.choice(3, 1)[0], gt=cfg.BRDF.gt)
@@ -77,7 +76,6 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
 
             pixels = helper_dict['pixels']
             pixels_norm = helper_dict['pixels_norm']
-            bn, vn, _, h, w = data['rgb'].shape
             if cfg.BRDF.context_feature.input == 'rgbdc':
                 featmaps = curr_model.feature_net(target_rgbdc)
             else:

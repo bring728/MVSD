@@ -8,7 +8,7 @@ from utils import *
 from loader import load_id_wandb, load_dataloader, load_model
 import os
 
-root = '/home/happily/Data'
+root = '/new_disk2/happily/Data'
 
 def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume=False, run_id=None):
     if debug:
@@ -88,4 +88,4 @@ if __name__ == "__main__":
     phase = 'TRAIN'
     is_DDP = False
     resume = False
-    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1-2_0.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')
+    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1-2_lemon.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')
