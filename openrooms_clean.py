@@ -2,7 +2,7 @@ import os
 import glob
 import os.path as osp
 
-datapath = '/home/happily/Data/OpenRooms_FF/'
+datapath = '/home/happily/Data/OpenRooms_FF_320/'
 if __name__ == '__main__':
     all_scene = []
     mvs_list = []
@@ -19,11 +19,11 @@ if __name__ == '__main__':
                         glob.glob(osp.join(scene, f'{k}_imdepth_*.dat'))) != 9 or len(glob.glob(osp.join(scene, f'{k}_*.png'))) != 36:
                     if len(glob.glob(osp.join(scene, f'{k}_*.rgbe'))) != 0:
                         raise Exception('file num error', scene, k)
-                # for pfm in glob.glob(osp.join(scene, f'{k}_conf*.dat')):
+                # for pfm in glob.glob(osp.join(scene, f'{k}_*.dat')):
                 #     os.remove(pfm)
-                # for pfm in glob.glob(osp.join(scene, f'{k}_depthvis*')):
+                # for pfm in glob.glob(osp.join(scene, f'{k}_*.png')):
                 #     os.remove(pfm)
-                # for pfm in glob.glob(osp.join(scene, f'{k}_imvis*.jpg')):
+                # for pfm in glob.glob(osp.join(scene, f'{k}_*.rgbe')):
                 #     os.remove(pfm)
                 # for pfm in glob.glob(osp.join(scene, f'{k}_depthest*.dat')):
                 #     os.remove(pfm)

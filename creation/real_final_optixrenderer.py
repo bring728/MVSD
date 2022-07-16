@@ -58,7 +58,11 @@ def work(xml, camtxt, outdir, k, num_pushed, mode, outdir_tmp, q):
             logger.debug(f'{outdir} - {k} is start from middle on gpu {gpu_id}')
             optixrenderer_arg = [renderer, '-f', xml, '-c', camtxt, '-o', osp.join(outdir_tmp, f'{k}_im'), '-m', '0', '--gpuIds',
                                  str(gpu_id), '--forceOutput', '--maxIteration', '4', '--medianFilter']
-            output = check_output(optixrenderer_arg, stderr=STDOUT, universal_newlines=True)
+            try:
+                output = check_output(optixrenderer_arg, stderr=STDOUT, universal_newlines=True)
+            except CalledProcessError as exc:
+                print(exc.returncode)
+                print(exc.output)
 
             rendered = sorted(glob.glob(osp.join(outdir_tmp, '*.rgbe')))
             num_rendered = 9 - len(rendered)
@@ -105,7 +109,7 @@ if __name__ == "__main__":
     m = Manager()
     q = m.Queue()
     for gpu in range(num_p):
-        q.put(gpu)
+        q.put(gpu+4)
     pool = Pool(processes=num_p)
 
     num_pushed = 0

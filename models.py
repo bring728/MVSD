@@ -281,24 +281,27 @@ class BRDFModel(object):
 
         # create feature extraction network
         if cfg.BRDF.context_feature.arch == 'resunet':
-            self.feature_net = ResUNet(cfg.BRDF.context_feature).to(device)
+            self.feature_net = Context_ResUNet(cfg.BRDF.context_feature).to(device)
         elif cfg.BRDF.context_feature.arch == 'unet':
-            self.feature_net = BRDFContextNet(cfg.BRDF.context_feature).to(device)
+            self.feature_net = Context_UNet(cfg.BRDF.context_feature).to(device)
         else:
             raise Exception('arch error')
         self.brdf_net = MultiViewAggregation(cfg).to(device)
-        if cfg.BRDF.refine.use:
-            self.brdf_refine_net = BRDFRefineNet(cfg).to(device)
-        else:
-            self.brdf_refine_net = nn.Linear(1, 1).to(device)
+        self.brdf_refine_net = BRDFRefineNet(cfg).to(device)
+
+        all_params = [
+            {'params': self.brdf_net.parameters(), 'lr': float(cfg.BRDF.aggregation.lr)},
+            {'params': self.feature_net.parameters(), 'lr': float(cfg.BRDF.context_feature.lr)},
+            {'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.BRDF.refine.lr)},
+        ]
+        stage = osp.basename(osp.dirname(experiment))
+        # if stage == 'stage3':
+        #     self.feature_GL_net =
 
         # count_parameters(self.feature_net)
 
         # optimizer and learning rate scheduler
-        self.optimizer = torch.optim.Adam([
-            {'params': self.brdf_net.parameters(), 'lr': float(cfg.BRDF.aggregation.lr)},
-            {'params': self.feature_net.parameters(), 'lr': float(cfg.BRDF.context_feature.lr)},
-            {'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.BRDF.refine.lr)}])
+        self.optimizer = torch.optim.Adam(all_params)
 
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=int(cfg.lrate_decay_steps),
@@ -354,7 +357,7 @@ class BRDFModel(object):
     #     n = int(global_step / self.cfg.lrate_decay_steps)
     #     self.optimizer.param_groups[0]['lr'] *= self.cfg.lrate_decay_factor ** n
 
-    def load_from_ckpt(self, out_folder, load_opt=True, load_scheduler=True):
+    def load_from_ckpt(self, out_folder, load_opt=True, load_scheduler=True, ):
         '''
         load model from existing checkpoints and return the current step
         :param out_folder: the directory that stores ckpts
@@ -380,7 +383,6 @@ class BRDFModel(object):
             print('No ckpts found, training from scratch...')
             step = 0
         return int(step)
-
 
 
 if __name__ == '__main__':

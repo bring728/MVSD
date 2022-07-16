@@ -118,6 +118,67 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             scalars_to_log['train/rough_mse_err'] = rough_mse_err_refined.item()
             total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err_refined + cfg.BRDF.lambda_rough * rough_mse_err_refined
             scalars_to_log['train/total_loss'] = total_loss.item()
+
+        elif stage == '3':
+            sample_view(data, 7 + np.random.choice(3, 1)[0], gt=cfg.BRDF.gt)
+            target_rgbdc = torch.cat([data['rgb'][:, 0], data['depth_norm'][:, 0], data['conf']], dim=1)
+            with torch.no_grad():
+                data['normal'] = curr_model.normal_net(target_rgbdc)
+                rgbdcn = torch.cat([target_rgbdc, 0.5 * (data['normal'] + 1)], dim=1)
+                axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
+                sharpness_hdr, intensity_hdr = helper_dict['sg2env'].SG_ldr2hdr(sharpness, intensity)
+                bn, _, _, rows, cols = axis.shape
+                data['DL'] = torch.cat([axis, sharpness_hdr, intensity_hdr], dim=2).reshape((bn, -1, rows, cols))
+
+            if save_image_flag:
+                DL = data['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
+                data['envmaps'] = helper_dict['sg2env'].fromSGtoIm(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:])
+
+            pixels = helper_dict['pixels']
+            pixels_norm = helper_dict['pixels_norm']
+            if cfg.BRDF.context_feature.input == 'rgbdc':
+                featmaps = curr_model.feature_net(target_rgbdc)
+            else:
+                rgb = data['rgb'][:, 0]
+                featmaps = curr_model.feature_net(rgb)
+
+            if cfg.BRDF.gt:
+                rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_gt'], data['rgb'])
+            else:
+                rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_est'], data['rgb'])
+            normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
+            DL_target = F.grid_sample(data['DL'], pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
+            featmaps_dense = F.grid_sample(featmaps, pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
+
+            brdf_feature = curr_model.brdf_net(rgb_sampled, featmaps_dense, viewdir, proj_err, normal_pred, DL_target).permute(0, 3, 1, 2)
+            if cfg.BRDF.refine.use:
+                refine_input = torch.cat([target_rgbdc, brdf_feature], dim=1)
+                if cfg.BRDF.refine.context_concat:
+                    refine_input = torch.cat([refine_input, featmaps_dense.squeeze(-2).permute(0, 3, 1, 2)], dim=1)
+                    brdf_refined = curr_model.brdf_refine_net(refine_input)
+                else:
+                    brdf_refined = curr_model.brdf_refine_net(refine_input)
+
+            segBRDF = data['mask'][:, :1]
+            albedo_pred_refined = brdf_refined[0]
+            rough_pred_refined = brdf_refined[1]
+            # if torch.sum(torch.isnan(rough_pred_refined)) > 0:
+            #     raise Exception('nan..')
+            pred['rough'] = rough_pred_refined
+            pred['conf'] = torch.ones_like(rough_pred_refined)
+
+            albedo_pred_scaled_refined = LSregress(albedo_pred_refined.detach() * segBRDF, data['albedo_gt'] * segBRDF, albedo_pred_refined)
+            albedo_pred_scaled_refined = torch.clamp(albedo_pred_scaled_refined, 0, 1)
+            pred['albedo'] = albedo_pred_scaled_refined
+
+            albedo_mse_err_refined = img2mse(albedo_pred_scaled_refined, data['albedo_gt'], segBRDF, None)
+            rough_mse_err_refined = img2mse(rough_pred_refined, data['rough_gt'], segBRDF, None)
+
+            scalars_to_log['train/albedo_mse_err'] = albedo_mse_err_refined.item()
+            scalars_to_log['train/rough_mse_err'] = rough_mse_err_refined.item()
+            total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err_refined + cfg.BRDF.lambda_rough * rough_mse_err_refined
+            scalars_to_log['train/total_loss'] = total_loss.item()
+
         else:
             raise Exception('stage error')
 

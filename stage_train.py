@@ -59,8 +59,8 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
             scalars_to_log['lr'] = curr_model.scheduler.get_last_lr()[0]
 
             if record_flag:
-                wandb_obj.log(scalars_to_log)
                 if global_step % cfg.i_print == 0:
+                    wandb_obj.log(scalars_to_log)
                     print_state(exp_name, start_time, max_iterations, global_step, gpu)
                 if save_image_flag:
                     record_images(stage, cfg, wandb_obj, train_data, pred, global_step)
@@ -82,10 +82,9 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
     if is_DDP:
         torch.distributed.destroy_process_group()
 
-
 if __name__ == "__main__":
     debug = True
     phase = 'TRAIN'
     is_DDP = False
     resume = False
-    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage2_daniff.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')
+    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1-1_0.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')

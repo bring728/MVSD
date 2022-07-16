@@ -210,6 +210,7 @@ class Openrooms_FF_single(Dataset):
             batchDict['envmaps_gt'] = envmaps.astype(np.float32)
         return batchDict
 
+
 # class Openrooms_LMDB_single(Dataset):
 #     def __init__(self, db_path, cfg, stage, gpu, lock):
 #         self.gpu = gpu

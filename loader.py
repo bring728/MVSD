@@ -13,7 +13,7 @@ import yaml
 import wandb
 
 
-def load_id_wandb(config, record_flag, resume, root, id=None):
+def load_id_wandb(config, record_flag, resume, root, id=None, resume_eval=False):
     stage = config.split('stage')[1].split('_')[0]
     if stage == '1-1':
         model_type = 'normal'
@@ -36,19 +36,23 @@ def load_id_wandb(config, record_flag, resume, root, id=None):
         # run_id = sorted(os.listdir(outputRoot))[-1]
         run_id = id
         print('resume: ', run_id)
-        # if record_flag:
-        #     wandb_obj = wandb.init(project=f'MVSD-stage{stage}', id=run_id, resume='must')
-        #     wandb_obj.config.update(cfg)
-        #     cfg_saved = CfgNode(wandb_obj.config._items)
-        #     for k in cfg_saved.keys():
-        #         if k == '_wandb':
-        #             continue
-        #         if cfg_saved[k] != cfg[k]:
-        #             print('config does not match.')
-        #             raise Exception('config does not match.')
+        if record_flag:
+            wandb_obj = wandb.init(project=f'MVSD-stage{stage}', id=run_id, resume='must')
+            # wandb_obj.config.update(cfg)
+            # cfg_saved = CfgNode(wandb_obj.config._items)
+            # for k in cfg_saved.keys():
+            #     if k == '_wandb':
+            #         continue
+            #     if cfg_saved[k] != cfg[k]:
+            #         print('config does not match.')
+            #         raise Exception('config does not match.')
     else:
-        current_time = datetime.now().strftime('%m%d%H%M')
-        run_id = f'{current_time}_stage{stage}'
+        if resume_eval:
+            run_id = f'{id}_eval2'
+
+        else:
+            current_time = datetime.now().strftime('%m%d%H%M')
+            run_id = f'{current_time}_stage{stage}'
         if record_flag:
             wandb_obj = wandb.init(project=f'MVSD-stage{stage}', id=run_id)
             wandb_obj.config.update(cfg)

@@ -1,0 +1,32 @@
+nepoch: 100
+batchsize: 32
+num_workers: 12
+lr: 1e-4
+lrate_decay_steps: 10000
+lrate_decay_factor: 1.0
+lambda_vis_prior: 0.001
+
+normal:
+  path: 07062049_stage1-1
+  norm_layer: group
+
+DL:
+  scale_inv: False
+  unified_decoder: False
+  norm_layer: batch
+  SGNum: 4
+  env_height: 8
+  env_width: 16
+  env_rows: 30
+  env_cols: 40
+
+num_view_all: 9
+autocast: True
+pinned: True
+randomseed: 2245
+i_img: 100
+i_img_up: 1.2
+i_save: 3000
+i_print: 10
+
+
