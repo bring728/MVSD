@@ -64,6 +64,30 @@ def record_images(stage, cfg, wandb_obj, data, pred, step, val=False):
         image = torch.cat([image_input, image_output], dim=1)
         log_image_dict[prefix + 'directlight'] = wandb.Image(image)
 
+    elif stage == '1':
+        imgs = [data['input'][0, :3, ...] ** (1.0 / 2.2), (0.5 * (pred['normal'][0] + 1)),
+                (0.5 * (data['normal_gt'][0] + 1))]
+        num_img_all = 3
+        c, h, w = imgs[0].shape
+        image_input = torch.zeros(c, h, num_img_all * w)
+        for i in range(num_img_all):
+            image_input[:, :, i * w:(i + 1) * w] = imgs[i].type(torch.float32)
+
+        imgs = []
+        imgs.append(data['input'][0, 3, ...].expand(pred['normal'][0].size()))
+        env1 = env_vis(data['envmaps_gt'][0], cfg.DL.env_height, cfg.DL.env_width, cfg.DL.env_rows, cfg.DL.env_cols)
+        env2 = env_vis(pred['envmaps'][0], cfg.DL.env_height, cfg.DL.env_width, cfg.DL.env_rows, cfg.DL.env_cols)
+        imgs.append(F.interpolate(env2[None], size=[240, 320])[0])
+        imgs.append(F.interpolate(env1[None], size=[240, 320])[0])
+
+        c, h, w = imgs[0].shape
+        image_output = torch.zeros(c, h, num_img_all * w)
+        for i in range(num_img_all):
+            image_output[:, :, i * w:(i + 1) * w] = imgs[i].type(torch.float32)
+
+        image = torch.cat([image_input, image_output], dim=1)
+        log_image_dict[prefix + 'directlight'] = wandb.Image(image)
+
     elif stage == '2':
         size_tmp = data['normal'][0].size()
         # depth = data['depth'][0, 0] / torch.quantile(data['depth'][0], 0.9)

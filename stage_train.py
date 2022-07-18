@@ -54,13 +54,12 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
             scaler.scale(total_loss).backward()
             scaler.step(curr_model.optimizer)
             scaler.update()
-
             curr_model.scheduler.step()
-            scalars_to_log['lr'] = curr_model.scheduler.get_last_lr()[0]
+            # scalars_to_log['lr'] = curr_model.scheduler.get_last_lr()[0]
 
             if record_flag:
                 if global_step % cfg.i_print == 0:
-                    wandb_obj.log(scalars_to_log)
+                    wandb_obj.log(scalars_to_log, step=global_step)
                     print_state(exp_name, start_time, max_iterations, global_step, gpu)
                 if save_image_flag:
                     record_images(stage, cfg, wandb_obj, train_data, pred, global_step)
@@ -87,4 +86,4 @@ if __name__ == "__main__":
     phase = 'TRAIN'
     is_DDP = False
     resume = False
-    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1-1_0.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')
+    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1_0.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')

@@ -185,6 +185,90 @@ class MonoDirectLightModel(object):
             step = 0
         return int(step)
 
+class NDLModel(object):
+    def __init__(self, cfg, gpu, experiment, load_opt=True, load_scheduler=True, phase='TRAIN', is_DDP=True):
+        self.gpu = gpu
+        self.phase = phase
+        self.is_DDP = is_DDP
+        device = torch.device('cuda:{}'.format(gpu))
+
+        self.normal_net = NormalNet(cfg.normal).to(device)
+        self.DL_net = DirectLightingNet(cfg.DL).to(device)
+        all_params = [
+            {'params': self.normal_net.parameters(), 'lr': float(cfg.normal.lr)},
+            {'params': self.DL_net.parameters(), 'lr': float(cfg.DL.lr)},
+        ]
+        self.optimizer = torch.optim.Adam(all_params)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
+                                                         step_size=int(cfg.lrate_decay_steps),
+                                                         gamma=float(cfg.lrate_decay_factor))
+
+        self.start_step = self.load_from_ckpt(experiment, load_opt=load_opt, load_scheduler=load_scheduler)
+
+        if self.is_DDP:
+            self.normal_net = torch.nn.parallel.DistributedDataParallel(self.normal_net, device_ids=[gpu], )
+            self.DL_net = torch.nn.parallel.DistributedDataParallel(self.DL_net, device_ids=[gpu], )
+
+        if phase == 'TRAIN':
+            self.switch_to_train()
+        elif phase == 'TEST' or phase == 'ALL':
+            self.switch_to_eval()
+        else:
+            raise Exception('Unrecognized phase for data loader')
+
+    def switch_to_eval(self):
+        self.DL_net.eval()
+        self.normal_net.eval()
+
+    def switch_to_train(self):
+        self.DL_net.train()
+        self.normal_net.train()
+
+    def save_model(self, filename):
+        to_save = {'optimizer': self.optimizer.state_dict(),
+                   'scheduler': self.scheduler.state_dict(),
+                   'normal_net': de_parallel(self.normal_net).state_dict(),
+                   'DL_net': de_parallel(self.DL_net).state_dict(),
+                   }
+        torch.save(to_save, filename)
+
+    def load_model(self, filename, load_opt=True, load_scheduler=True):
+        if self.phase == 'TRAIN' and self.is_DDP:
+            to_load = torch.load(filename, map_location={'cuda:0': 'cuda:%d' % self.gpu})
+        else:
+            to_load = torch.load(filename)
+
+        if load_opt:
+            self.optimizer.load_state_dict(to_load['optimizer'])
+        if load_scheduler:
+            self.scheduler.load_state_dict(to_load['scheduler'])
+        self.DL_net.load_state_dict(to_load['DL_net'])
+        self.normal_net.load_state_dict(to_load['normal_net'])
+
+
+    def load_from_ckpt(self, out_folder, load_opt=False, load_scheduler=False):
+        '''
+        load model from existing checkpoints and return the current step
+        :param out_folder: the directory that stores ckpts
+        :return: the current starting step
+        '''
+        # all existing ckpts
+        ckpts = []
+        if os.path.exists(out_folder):
+            ckpts = [os.path.join(out_folder, f) for f in sorted(os.listdir(out_folder)) if f.endswith('.pth')]
+
+        if len(ckpts) > 0:
+            fpath = ckpts[-1]
+            self.load_model(fpath, load_opt, load_scheduler)
+            step = fpath[-10:-4]
+            print('Reloading from {}, starting at step={}'.format(fpath, step))
+            if step == 'latest':
+                step = 9999999
+        else:
+            print('No ckpts found, training from scratch...')
+            step = 0
+        return int(step)
+
 
 class SG2env():
     def __init__(self, SGNum, envWidth=16, envHeight=8, gpu=0):

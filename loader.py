@@ -1,4 +1,4 @@
-from models import MonoNormalModel, MonoDirectLightModel, SG2env, BRDFModel
+from models import *
 # import pyarrow as pa
 # import lmdb
 import numpy as np
@@ -19,13 +19,15 @@ def load_id_wandb(config, record_flag, resume, root, id=None, resume_eval=False)
         model_type = 'normal'
     elif stage == '1-2':
         model_type = 'DL'
+    elif stage == '1':
+        model_type = 'NDL'
     elif stage == '2':
         model_type = 'BRDF'
     else:
         raise Exception('stage error.')
 
     outputRoot = osp.join(root, f'MVSD_output/stage{stage}')
-    dataRoot = osp.join(root, 'OpenRooms_FF')
+    dataRoot = osp.join(root, 'OpenRooms_FF_320')
     with open(os.getcwd() + '/config/' + config, "r") as f:
         cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
         cfg = CfgNode(cfg_dict)
@@ -37,7 +39,7 @@ def load_id_wandb(config, record_flag, resume, root, id=None, resume_eval=False)
         run_id = id
         print('resume: ', run_id)
         if record_flag:
-            wandb_obj = wandb.init(project=f'MVSD-stage{stage}', id=run_id, resume='must')
+            wandb_obj = wandb.init(project=f'MVSD-stage{stage}', id=run_id, resume=True)
             # wandb_obj.config.update(cfg)
             # cfg_saved = CfgNode(wandb_obj.config._items)
             # for k in cfg_saved.keys():
@@ -48,7 +50,7 @@ def load_id_wandb(config, record_flag, resume, root, id=None, resume_eval=False)
             #         raise Exception('config does not match.')
     else:
         if resume_eval:
-            run_id = f'{id}_eval2'
+            run_id = f'{id}_eval'
 
         else:
             current_time = datetime.now().strftime('%m%d%H%M')
@@ -64,7 +66,8 @@ def load_id_wandb(config, record_flag, resume, root, id=None, resume_eval=False)
 
 
 def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag):
-    worker_per_gpu = cfg.num_workers
+    # worker_per_gpu = cfg.num_workers
+    worker_per_gpu = 0
     batch_per_gpu = cfg.batchsize
     if stage.startswith('1'):
         train_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TRAIN')
@@ -108,6 +111,11 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
     elif stage == '1-2':
         helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
         curr_model = MonoDirectLightModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
+        if do_watch:
+            wandb_obj.watch(curr_model.DL_net)
+    elif stage == '1':
+        helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
+        curr_model = NDLModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
         if do_watch:
             wandb_obj.watch(curr_model.DL_net)
 

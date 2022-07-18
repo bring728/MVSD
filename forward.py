@@ -59,6 +59,33 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
             total_loss += cfg.lambda_vis_prior * vis_beta_loss
 
+        elif stage == '1':
+            pred['normal'] = curr_model.normal_net(data['input'])
+            rgbdcn = torch.cat([data['input'], 0.5 * (pred['normal'].detach() + 1)], dim=1)
+            axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
+            sharpness_hdr, intensity_hdr = helper_dict['sg2env'].SG_ldr2hdr(sharpness, intensity)
+            envmaps_pred = helper_dict['sg2env'].fromSGtoIm(axis, sharpness_hdr, intensity_hdr)
+            pred['envmaps'] = envmaps_pred
+
+            segBRDF = F.adaptive_avg_pool2d(data['mask'][:, :1, ...], (cfg.DL.env_rows, cfg.DL.env_cols))
+            segEnvBatch = segBRDF[..., None, None].expand_as(data['envmaps_gt'])
+            if cfg.DL.scale_inv:
+                envmaps_pred_scaled = LSregress(envmaps_pred.detach() * segEnvBatch, data['envmaps_gt'] * segEnvBatch, envmaps_pred)
+                env_loss = img2log_mse(envmaps_pred_scaled, data['envmaps_gt'], segEnvBatch)
+                scalars_to_log['train/env_scaled_loss'] = env_loss.item()
+            else:
+                env_loss = img2log_mse(envmaps_pred, data['envmaps_gt'], segEnvBatch)
+                scalars_to_log['train/env_msle_loss'] = env_loss.item()
+            normal_mse_err = img2mse(pred['normal'], data['normal_gt'], data['mask'][:, 1:, ...])
+            normal_ang_err = img2angerr(pred['normal'], data['normal_gt'], data['mask'][:, 1:, ...])
+            scalars_to_log['train/normal_mse_err'] = normal_mse_err.item()
+            scalars_to_log['train/normal_ang_err'] = normal_ang_err.item()
+
+            vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
+            scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
+            total_loss = env_loss + cfg.lambda_mse * normal_mse_err + cfg.lambda_ang * normal_ang_err + cfg.lambda_vis_prior * vis_beta_loss
+            scalars_to_log['train/total_loss'] = total_loss.item()
+
         elif stage == '2':
             sample_view(data, 7 + np.random.choice(3, 1)[0], gt=cfg.BRDF.gt)
             target_rgbdc = torch.cat([data['rgb'][:, 0], data['depth_norm'][:, 0], data['conf']], dim=1)

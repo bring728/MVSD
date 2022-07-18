@@ -180,7 +180,7 @@ class Openrooms_FF_single(Dataset):
         # name = osp.join(self.dataRoot, str(self.nameList[ind], encoding='utf-8'))
         # name = osp.join(self.dataRoot, self.nameList[ind])
         batchDict['name'] = name
-        im = loadHdr(name.format('im', 'rgbe'))
+        im = loadHdr(name.format('im', 'hdr'))
         seg = loadImage(name.format('immask', 'png'))[0:1, :, :]
         scene_scale = get_hdr_scale(im, seg, self.phase)
         im = np.clip(im * scene_scale, 0, 1.0)
@@ -204,6 +204,15 @@ class Openrooms_FF_single(Dataset):
             batchDict['normal_gt'] = normal
 
         elif self.stage == '1-2':
+            envmaps = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
+                                             self.cfg.DL.env_rows, self.cfg.DL.env_cols)
+            envmaps = envmaps * scene_scale
+            batchDict['envmaps_gt'] = envmaps.astype(np.float32)
+
+        if self.stage == '1':
+            normal = loadImage(name.format('imnormal', 'png'), normalize_01=False)
+            normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0, keepdims=True), 1e-5))).astype(np.float32)
+            batchDict['normal_gt'] = normal
             envmaps = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
                                              self.cfg.DL.env_rows, self.cfg.DL.env_cols)
             envmaps = envmaps * scene_scale

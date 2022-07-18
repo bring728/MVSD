@@ -8,12 +8,12 @@ import os
 # imageio.plugins.freeimage.download()
 
 torch.backends.cudnn.benchmark = True
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
 
 if __name__ == '__main__':
     if len(sys.argv) < 3:
-        num_gpu = 4
-        config = 'stage1-1_0.yml'
+        num_gpu = 8
+        config = 'stage1_0.yml'
     else:
         num_gpu = int(sys.argv[1])
         config = sys.argv[2]
@@ -21,7 +21,7 @@ if __name__ == '__main__':
     debug = False
     phase = 'TRAIN'
     resume = False
-    # id = '07101614_stage2'
+    # id = '07161053_stage1'
     id = None
     torch.multiprocessing.spawn(train, nprocs=num_gpu, args=(num_gpu, config, debug, phase, is_DDP, resume, id))
     # resume = True

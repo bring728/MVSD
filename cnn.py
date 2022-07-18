@@ -316,8 +316,8 @@ class DirectLightingNet(nn.Module):
         self.layer_d_2 = make_layer(in_ch=32, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
         self.layer_d_3 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
         self.layer_d_4 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_d_5 = make_layer(in_ch=256, out_ch=384, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_d_6 = make_layer(in_ch=384, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
+        self.layer_d_5 = make_layer(in_ch=256, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
+        self.layer_d_6 = make_layer(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
         self.layer_d_7 = make_layer(in_ch=512, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
         self.layer_d_8 = make_layer(in_ch=512, out_ch=1024, kernel=3, stride=1, num_group=64, norm_layer=cfg.norm_layer)
 
@@ -332,23 +332,20 @@ class DirectLightingNet(nn.Module):
         self.layer_axis_u_2 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
         self.layer_axis_u_3 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
         self.layer_axis_u_4 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_axis_u_5 = make_layer(in_ch=256, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=cfg.norm_layer)
-        self.layer_axis_final = make_layer(pad_type='rep', in_ch=128, out_ch=cfg.SGNum * 3, kernel=3, stride=1, act='None',
+        self.layer_axis_final = make_layer(pad_type='rep', in_ch=256, out_ch=cfg.SGNum * 3, kernel=3, stride=1, act='None',
                                            norm_layer='None')
 
         self.layer_sharp_u_1 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
         self.layer_sharp_u_2 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
         self.layer_sharp_u_3 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
         self.layer_sharp_u_4 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_sharp_u_5 = make_layer(in_ch=256, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=cfg.norm_layer)
-        self.layer_sharp_final = make_layer(pad_type='rep', in_ch=128, out_ch=cfg.SGNum, kernel=3, stride=1, act='None', norm_layer='None')
+        self.layer_sharp_final = make_layer(pad_type='rep', in_ch=256, out_ch=cfg.SGNum, kernel=3, stride=1, act='None', norm_layer='None')
 
         self.layer_vis_u_1 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
         self.layer_vis_u_2 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
         self.layer_vis_u_3 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
         self.layer_vis_u_4 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_vis_u_5 = make_layer(in_ch=256, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=cfg.norm_layer)
-        self.layer_vis_final = make_layer(pad_type='rep', in_ch=128, out_ch=cfg.SGNum, kernel=3, stride=1, act='None', norm_layer='None')
+        self.layer_vis_final = make_layer(pad_type='rep', in_ch=256, out_ch=cfg.SGNum, kernel=3, stride=1, act='None', norm_layer='None')
 
     @autocast()
     def forward(self, x):
@@ -369,8 +366,7 @@ class DirectLightingNet(nn.Module):
         dx3 = self.layer_axis_u_3(F.interpolate(torch.cat([dx2, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx3 = F.interpolate(dx3, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
         dx4 = self.layer_axis_u_4(F.interpolate(torch.cat([dx3, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx5 = self.layer_axis_u_5(dx4)
-        axis_out = torch.tanh(self.layer_axis_final(dx5))
+        axis_out = torch.tanh(self.layer_axis_final(dx4))
 
         dx1 = self.layer_sharp_u_1(x8)
         dx2 = self.layer_sharp_u_2(F.interpolate(torch.cat([dx1, x7], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
@@ -378,8 +374,7 @@ class DirectLightingNet(nn.Module):
         dx3 = self.layer_sharp_u_3(F.interpolate(torch.cat([dx2, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx3 = F.interpolate(dx3, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
         dx4 = self.layer_sharp_u_4(F.interpolate(torch.cat([dx3, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx5 = self.layer_sharp_u_5(dx4)
-        sharp_out = torch.tanh(self.layer_sharp_final(dx5))
+        sharp_out = torch.tanh(self.layer_sharp_final(dx4))
 
         dx1 = self.layer_vis_u_1(x8)
         dx2 = self.layer_vis_u_2(F.interpolate(torch.cat([dx1, x7], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
@@ -387,8 +382,7 @@ class DirectLightingNet(nn.Module):
         dx3 = self.layer_vis_u_3(F.interpolate(torch.cat([dx2, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx3 = F.interpolate(dx3, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
         dx4 = self.layer_vis_u_4(F.interpolate(torch.cat([dx3, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx5 = self.layer_vis_u_5(dx4)
-        vis_out = torch.tanh(self.layer_vis_final(dx5))
+        vis_out = torch.tanh(self.layer_vis_final(dx4))
 
         bn, _, row, col = vis_out.size()
 
