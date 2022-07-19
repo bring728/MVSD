@@ -16,6 +16,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp.autocast_mode import autocast
 from utils import *
+from CBNdecoder import DecoderCBatchNorm2
+
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -105,26 +107,25 @@ class Context_ResUNet(nn.Module):
         self._norm_layer = norm_layer
         self.dilation = 1
         block = BasicBlock
-        replace_stride_with_dilation = [False, False, False]
         self.inplanes = 64
         self.groups = 1
         self.base_width = 64
-        self.conv1 = nn.Conv2d(8, self.inplanes, kernel_size=7, stride=2, padding=3,
-                               bias=False, padding_mode='reflect')
+        self.conv1 = nn.Conv2d(8, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False, padding_mode='reflect')
         self.bn1 = norm_layer(self.inplanes, track_running_stats=False, affine=True)
         self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
-                                       dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
-                                       dilate=replace_stride_with_dilation[1])
+
+        self.layer1 = self._make_layer(block, 64, layers[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
 
         # decoder
-        self.upconv3 = upconv(filters[2], 128, 3, 2)
-        self.iconv3 = conv(filters[1] + 128, 128, 3, 1)
-        self.upconv2 = upconv(128, 64, 3, 2)
-        self.iconv2 = conv(filters[0] + 64, cfg.dim, 3, 1)
-
+        self.upconv4 = upconv(filters[3], filters[2], 3, 2)
+        self.iconv4 = conv(filters[2] + filters[2], filters[2], 3, 1)
+        self.upconv3 = upconv(filters[2], filters[1], 3, 2)
+        self.iconv3 = conv(filters[1] + filters[1], filters[1], 3, 1)
+        self.upconv2 = upconv(filters[1], filters[0], 3, 2)
+        self.iconv2 = conv(filters[0] + filters[0], cfg.dim, 3, 1)
         # fine-level conv
         self.out_conv = nn.Conv2d(cfg.dim, cfg.dim, 1, 1)
 
@@ -171,9 +172,14 @@ class Context_ResUNet(nn.Module):
 
         x1 = self.layer1(x)
         x2 = self.layer2(x1)
-        x_encoded = self.layer3(x2)
+        x3 = self.layer3(x2)
+        x_encoded = self.layer4(x3)
 
-        x = self.upconv3(x_encoded)
+        x = self.upconv4(x_encoded)
+        x = self.skipconnect(x3, x)
+        x = self.iconv4(x)
+
+        x = self.upconv3(x)
         x = self.skipconnect(x2, x)
         x = self.iconv3(x)
 
@@ -183,6 +189,23 @@ class Context_ResUNet(nn.Module):
 
         x_out = self.out_conv(x)
         return x_encoded, x_out
+
+
+class GlobalLightingNet(nn.Module):
+    def __init__(self, cfg):
+        super(GlobalLightingNet, self).__init__()
+
+        self.layer_d_1 = make_layer(in_ch=512, out_ch=512, kernel=4, stride=2, num_group=64, norm_layer='instance')
+        self.layer_d_2 = make_layer(in_ch=512, out_ch=512, kernel=4, stride=2, num_group=64, norm_layer='instance')
+        self.decoder = DecoderCBatchNorm2(cfg.dim)
+
+    @autocast()
+    def forward(self, x):
+        x1 = self.layer_d_1(x)
+        x2 = self.layer_d_2(x1)
+        global_lighting_feature = F.adaptive_avg_pool2d(x2, (1, 1))[..., 0, 0]
+        self.decoder(global_lighting_feature, p)
+        return
 
 
 def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride=1, num_group=4, act='relu', norm_layer='group'):
@@ -204,18 +227,19 @@ def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride
         layers.append(nn.BatchNorm2d(out_ch))
     elif norm_layer == 'instance':
         layers.append(nn.InstanceNorm2d(out_ch))
-    elif norm_layer == 'None':
+    elif norm_layer == 'none':
         norm = 'none'
     else:
-        assert 'not implemented pad'
+        raise Exception('not implemented pad')
 
     if act == 'relu':
         layers.append(nn.ReLU(inplace=True))
-    elif act == 'None':
+    elif act == 'none':
         act = 'none'
     else:
-        assert 'not implemented act'
+        raise Exception('not implemented act')
     return nn.Sequential(*layers)
+
 
 def make_layer3D(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride=1, num_group=4, act='relu', norm_layer='group'):
     act = act.lower()
@@ -390,35 +414,6 @@ class DirectLightingNet(nn.Module):
         vis = vis.view(bn, self.SGNum, 1, row, col)
         intensity = intensity * vis
         return axis, sharp, intensity, vis
-
-
-class Context_GLNet(nn.Module):
-    def __init__(self, cfg):
-        super(Context_GLNet, self).__init__()
-        self.layer_d_1 = make_layer(in_ch=1024, out_ch=1024, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
-        self.layer_d_2 = make_layer(in_ch=1024, out_ch=1024, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
-
-        self.layer_u_1 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
-        self.layer_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=cfg.norm_layer)
-        self.layer_final = make_layer(pad_type='rep', in_ch=128, out_ch=cfg.dim, kernel=3, stride=1, act='None', norm_layer='None')
-
-    @autocast()
-    def forward(self, x):
-        x1 = self.layer_d_1(x)
-        x2 = self.layer_d_2(x1)
-        x3 = self.layer_d_3(x2)
-        x4 = self.layer_d_4(x3)
-        x5 = self.layer_d_5(x4)
-        encoded_x = self.layer_d_6(x5)
-
-        dx1 = self.layer_u_1(encoded_x)
-        dx2 = self.layer_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = self.layer_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx4 = self.layer_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        x_out = self.layer_final(dx4)
-        return encoded_x, x_out
 
 
 class BRDFRefineNet(nn.Module):

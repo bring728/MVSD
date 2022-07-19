@@ -1,23 +1,24 @@
-mode: normal
+mode: DL
 
 nepoch: 80
-batchsize: 8
-num_workers: 3
+batchsize: 16
+num_workers: 6
 lrate_decay_steps: 10000
-lrate_decay_factor: 1.0
-lambda_mse: 0.3
-lambda_ang: 1.0
-lambda_vis_prior: 0.001
+lrate_decay_factor: 0.8
 
 normal:
+  lambda_mse: 1.0
+  lambda_ang: 1.0
   lr: 1e-4
   norm_layer: group
 
 DL:
-  lr: 1e-4
-  scale_inv: False
+  lambda_vis_prior: 0.001
+  lr: 1e-3
+  scale_inv: True
   unified_decoder: False
   norm_layer: batch
+
   SGNum: 4
   env_height: 8
   env_width: 16

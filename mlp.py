@@ -53,6 +53,7 @@ class Transformer(nn.Module):
             nn.Linear(final_hidden, final_hidden),
         )
 
+    @autocast()
     def forward(self, x_input, weight):
         b, h, w, n, _ = x_input.shape
         v = self.to_v_1(x_input)
@@ -112,6 +113,7 @@ class MultiViewAggregation(nn.Module):
         self.transformer = Transformer(input_ch, cfg.BRDF.aggregation.head_dim,
                                        cfg.BRDF.aggregation.mlp_hidden, cfg.BRDF.aggregation.final_hidden)
 
+    @autocast()
     def forward(self, rgb, featmaps_dense, view_dir, proj_err, normal, DL):
         bn, h, w, num_views, _ = rgb.shape
         weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)

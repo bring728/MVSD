@@ -15,14 +15,10 @@ import wandb
 
 def load_id_wandb(config, record_flag, resume, root, id=None):
     stage = config.split('stage')[1].split('_')[0]
-    if stage == '1-1':
-        model_type = 'normal'
-    elif stage == '1-2':
-        model_type = 'DL'
-    elif stage == '1':
-        model_type = 'NDL'
+    if stage == '1':
+        model_type = 'singleview'
     elif stage == '2':
-        model_type = 'BRDF'
+        model_type = 'multiview'
     else:
         raise Exception('stage error.')
 
@@ -64,7 +60,7 @@ def load_id_wandb(config, record_flag, resume, root, id=None):
 def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag):
     worker_per_gpu = cfg.num_workers
     batch_per_gpu = cfg.batchsize
-    if stage.startswith('1'):
+    if stage == '1':
         train_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TRAIN')
         val_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TEST')
         # batch_per_gpu = int(cfg.batchsize / num_gpu)
@@ -72,16 +68,10 @@ def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag):
         train_dataset = Openrooms_FF(dataRoot, cfg, stage, 'TRAIN', debug)
         val_dataset = Openrooms_FF(dataRoot, cfg, stage, 'TEST', debug)
 
-    # if debug:
-    # batch_per_gpu = 1
-    # worker_per_gpu = 0
-
     train_sampler = None
     if is_DDP:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    # is_shuffle = not is_DDP and not debug
     is_shuffle = not is_DDP
-    # is_shuffle = False
     train_loader = DataLoader(train_dataset, batch_size=batch_per_gpu, shuffle=is_shuffle, num_workers=worker_per_gpu,
                               pin_memory=cfg.pinned, sampler=train_sampler)
     val_loader = DataLoader(val_dataset, batch_size=batch_per_gpu, num_workers=worker_per_gpu, shuffle=False)
@@ -99,7 +89,7 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
 
     if stage == '1':
         helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
-        curr_model = NDLModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
+        curr_model = SingleViewModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
         if do_watch:
             watch_model = []
             if cfg.mode == 'normal' or cfg.mode == 'finetune':
@@ -127,8 +117,12 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
         pixels_norm = torch.from_numpy(pixels_norm)
         pixels_norm = pixels_norm.to(gpu, non_blocking=cfg.pinned)[None].expand([cfg.batchsize, -1, -1, -1])
         helper_dict['pixels_norm'] = pixels_norm
-        curr_model = BRDFModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
+        curr_model = MultiViewModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
         if do_watch:
-            wandb_obj.watch([curr_model.feature_net, curr_model.brdf_net, curr_model.brdf_refine_net], log='all')
-
+            watch_model = []
+            if cfg.mode == 'normal' or cfg.mode == 'finetune':
+                watch_model.append([curr_model.context_net, curr_model.aggregation_net, curr_model.brdf_refine_net])
+            if cfg.mode == 'DL' or cfg.mode == 'finetune':
+                watch_model.append([curr_model.GL_Net, curr_model.GL_decoder])
+            wandb_obj.watch(watch_model, log='all')
     return curr_model, helper_dict

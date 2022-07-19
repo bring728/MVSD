@@ -29,7 +29,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 normal_ang_err = img2angerr(pred['normal'], data['normal_gt'], data['mask'][:, 1:, ...])
                 scalars_to_log['train/normal_mse_err'] = normal_mse_err.item()
                 scalars_to_log['train/normal_ang_err'] = normal_ang_err.item()
-                total_loss = cfg.lambda_mse * normal_mse_err + cfg.lambda_ang * normal_ang_err
+                total_loss = cfg.normal.lambda_mse * normal_mse_err + cfg.normal.lambda_ang * normal_ang_err
                 scalars_to_log['train/total_loss'] = total_loss.item()
             elif cfg.mode == 'DL':
                 with torch.no_grad():
@@ -55,7 +55,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
                 # vis_beta_loss = torch.mean(torch.log10(0.1 + vis) + torch.log10(0.1 + 1. - vis) + 1.)
                 scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
-                total_loss = env_loss + cfg.lambda_vis_prior * vis_beta_loss
+                total_loss = env_loss + cfg.DL.lambda_vis_prior * vis_beta_loss
 
             if cfg.mode == 'finetune':
                 pred['normal'] = curr_model.normal_net(data['input'])
@@ -101,37 +101,74 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
 
             pixels = helper_dict['pixels']
             pixels_norm = helper_dict['pixels_norm']
-            x_encoded, featmaps = curr_model.feature_net(rgbdcn)
 
-            if cfg.BRDF.gt:
-                rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_gt'], data['rgb'])
-            else:
-                rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_est'], data['rgb'])
-            normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
-            DL_target = F.grid_sample(data['DL'], pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
-            featmaps_dense = F.grid_sample(featmaps, pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
+            if cfg.mode == 'BRDF':
+                x_encoded, featmaps = curr_model.context_net(rgbdcn)
 
-            brdf_feature = curr_model.brdf_net(rgb_sampled, featmaps_dense, viewdir, proj_err, normal_pred, DL_target).permute(0, 3, 1, 2)
-            refine_input = torch.cat([rgbdcn, brdf_feature, featmaps_dense.squeeze(-2).permute(0, 3, 1, 2)], dim=1)
-            albedo, rough = curr_model.brdf_refine_net(refine_input)
+                if cfg.BRDF.gt:
+                    rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_gt'], data['rgb'])
+                else:
+                    rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_est'], data['rgb'])
+                normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
+                DL_target = F.grid_sample(data['DL'], pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
+                featmaps_dense = F.grid_sample(featmaps, pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :,
+                                 None]
 
-            segBRDF = data['mask'][:, :1]
-            # if torch.sum(torch.isnan(rough_pred_refined)) > 0:
-            #     raise Exception('nan..')
-            pred['rough'] = rough
-            pred['conf'] = torch.ones_like(rough)
+                brdf_feature = curr_model.aggregation_net(rgb_sampled, featmaps_dense, viewdir, proj_err, normal_pred, DL_target).permute(0, 3, 1,
+                                                                                                                                   2)
+                refine_input = torch.cat([rgbdcn, brdf_feature, featmaps_dense.squeeze(-2).permute(0, 3, 1, 2)], dim=1)
+                albedo, rough = curr_model.brdf_refine_net(refine_input)
 
-            albedo_pred_scaled_refined = LSregress(albedo.detach() * segBRDF, data['albedo_gt'] * segBRDF, rough)
-            albedo_pred_scaled_refined = torch.clamp(albedo_pred_scaled_refined, 0, 1)
-            pred['albedo'] = albedo_pred_scaled_refined
+                segBRDF = data['mask'][:, :1]
+                pred['rough'] = rough
+                pred['conf'] = torch.ones_like(rough)
 
-            albedo_mse_err_refined = img2mse(albedo_pred_scaled_refined, data['albedo_gt'], segBRDF, None)
-            rough_mse_err_refined = img2mse(rough, data['rough_gt'], segBRDF, None)
+                albedo_pred_scaled_refined = LSregress(albedo.detach() * segBRDF, data['albedo_gt'] * segBRDF, rough)
+                albedo_pred_scaled_refined = torch.clamp(albedo_pred_scaled_refined, 0, 1)
+                pred['albedo'] = albedo_pred_scaled_refined
 
-            scalars_to_log['train/albedo_mse_err'] = albedo_mse_err_refined.item()
-            scalars_to_log['train/rough_mse_err'] = rough_mse_err_refined.item()
-            total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err_refined + cfg.BRDF.lambda_rough * rough_mse_err_refined
-            scalars_to_log['train/total_loss'] = total_loss.item()
+                albedo_mse_err_refined = img2mse(albedo_pred_scaled_refined, data['albedo_gt'], segBRDF, None)
+                rough_mse_err_refined = img2mse(rough, data['rough_gt'], segBRDF, None)
+
+                scalars_to_log['train/albedo_mse_err'] = albedo_mse_err_refined.item()
+                scalars_to_log['train/rough_mse_err'] = rough_mse_err_refined.item()
+                total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err_refined + cfg.BRDF.lambda_rough * rough_mse_err_refined
+                scalars_to_log['train/total_loss'] = total_loss.item()
+
+            elif cfg.mode == 'finetune':
+                x_encoded, featmaps = curr_model.context_net(rgbdcn)
+
+                if cfg.BRDF.gt:
+                    rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_gt'], data['rgb'])
+                else:
+                    rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_est'], data['rgb'])
+                normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
+                DL_target = F.grid_sample(data['DL'], pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
+                featmaps_dense = F.grid_sample(featmaps, pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :,
+                                 None]
+
+                brdf_feature = curr_model.aggregation_net(rgb_sampled, featmaps_dense, viewdir, proj_err, normal_pred, DL_target).permute(0, 3, 1,
+                                                                                                                                   2)
+                refine_input = torch.cat([rgbdcn, brdf_feature, featmaps_dense.squeeze(-2).permute(0, 3, 1, 2)], dim=1)
+                albedo, rough = curr_model.brdf_refine_net(refine_input)
+
+                curr_model.GL_Net(x_encoded)
+
+                segBRDF = data['mask'][:, :1]
+                pred['rough'] = rough
+                pred['conf'] = torch.ones_like(rough)
+
+                albedo_pred_scaled_refined = LSregress(albedo.detach() * segBRDF, data['albedo_gt'] * segBRDF, rough)
+                albedo_pred_scaled_refined = torch.clamp(albedo_pred_scaled_refined, 0, 1)
+                pred['albedo'] = albedo_pred_scaled_refined
+
+                albedo_mse_err_refined = img2mse(albedo_pred_scaled_refined, data['albedo_gt'], segBRDF, None)
+                rough_mse_err_refined = img2mse(rough, data['rough_gt'], segBRDF, None)
+
+                scalars_to_log['train/albedo_mse_err'] = albedo_mse_err_refined.item()
+                scalars_to_log['train/rough_mse_err'] = rough_mse_err_refined.item()
+                total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err_refined + cfg.BRDF.lambda_rough * rough_mse_err_refined
+                scalars_to_log['train/total_loss'] = total_loss.item()
 
         else:
             raise Exception('stage error')

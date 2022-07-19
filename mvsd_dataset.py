@@ -15,6 +15,7 @@ class Openrooms_FF(Dataset):
         self.num_view_all = cfg.num_view_all
         self.dataRoot = dataRoot
         self.cfg = cfg
+        self.mode = cfg.mode
         self.stage = stage
         self.phase = phase
         self.idx_list = list(range(1, self.num_view_all + 1))
@@ -65,9 +66,9 @@ class Openrooms_FF(Dataset):
         seg = loadImage(name_list[0].format('immask', 'png'))[0:1, :, :]
         scene_scale = get_hdr_scale(target_im, seg, self.phase)
 
-        segObj_stage2 = (seg > 0.9)
-        segObj_stage3 = ndimage.binary_erosion(segObj_stage2.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
-        seg = np.concatenate([segObj_stage2, segObj_stage3], axis=0).astype(np.float32)
+        segObj_BRDF = (seg > 0.9)
+        segObj_SVL = ndimage.binary_erosion(segObj_BRDF.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
+        seg = np.concatenate([segObj_BRDF, segObj_SVL], axis=0).astype(np.float32)
         batchDict['mask'] = seg  # segBRDF
 
         src_c2w_list = []
@@ -115,18 +116,16 @@ class Openrooms_FF(Dataset):
         # DL = loadH5(name_list[0].format('DLest', 'h5'))
         # batchDict['DL'] = DL
 
-        if self.stage == '2':
-            albedo = loadImage(name_list[0].format('imbaseColor', 'png'))
-            batchDict['albedo_gt'] = (albedo ** 2.2).astype(np.float32)
-            rough = loadImage(name_list[0].format('imroughness', 'png'))[0:1, :, :].astype(np.float32)
-            batchDict['rough_gt'] = rough
+        albedo = loadImage(name_list[0].format('imbaseColor', 'png'))
+        batchDict['albedo_gt'] = (albedo ** 2.2).astype(np.float32)
+        rough = loadImage(name_list[0].format('imroughness', 'png'))[0:1, :, :].astype(np.float32)
+        batchDict['rough_gt'] = rough
 
-        if self.stage == '3':
-            envmaps, envmapsInd = loadEnvmap(name_list[0].format('imenv', 'hdr'), self.cfg.GL.env_height, self.cfg.GL.env_width,
-                                             self.cfg.GL.env_rows, self.cfg.GL.env_cols)
+        if self.mode == 'SVL' or self.mode == 'finetune':
+            envmaps = loadEnvmap(name_list[0].replace('_320','_env').format('imenv', 'hdr'), self.cfg.SVL.env_height, self.cfg.SVL.env_width,
+                                             self.cfg.SVL.env_rows, self.cfg.SVL.env_cols)
             envmaps = envmaps * scene_scale
             batchDict['envmaps_gt'] = envmaps.astype(np.float32)
-            batchDict['envmapsInd'] = envmapsInd
         return batchDict
 
 
@@ -209,10 +208,9 @@ class Openrooms_FF_single(Dataset):
         #                                      self.cfg.DL.env_rows, self.cfg.DL.env_cols)
         #     envmaps = envmaps * scene_scale
         #     batchDict['envmaps_gt'] = envmaps.astype(np.float32)
-        if self.mode == 'normal' or self.mode == 'finetune':
-            normal = loadImage(name.format('imnormal', 'png'), normalize_01=False)
-            normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0, keepdims=True), 1e-5))).astype(np.float32)
-            batchDict['normal_gt'] = normal
+        normal = loadImage(name.format('imnormal', 'png'), normalize_01=False)
+        normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0, keepdims=True), 1e-5))).astype(np.float32)
+        batchDict['normal_gt'] = normal
         if self.mode == 'DL' or self.mode == 'finetune':
             envmaps = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
                                              self.cfg.DL.env_rows, self.cfg.DL.env_cols)

@@ -1,15 +1,17 @@
+mode: finetune
+
 nepoch: 10
 batchsize: 2
 num_workers: 10
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
 
+stage1_path: 07171046_stage1
+
 normal:
-  path: 07171046_stage1
   norm_layer: group
 
 DL:
-  path: 07171046_stage1
   unified_decoder: False
   norm_layer: batch
   SGNum: 4
@@ -17,7 +19,6 @@ DL:
   env_width: 16
   env_rows: 30
   env_cols: 40
-
 
 BRDF:
   gt: False
@@ -30,7 +31,6 @@ BRDF:
     lr: 1e-4
 
   aggregation:
-    pbr_collect: sum
     pbr_hidden: 32
     input: dot
     pbr_feature_dim: 8
@@ -44,11 +44,13 @@ BRDF:
     lr: 1e-4
     norm_layer: group
 
-  conf:
-    use: False
-    loss: linear
+SVL:
+  dim: 128
+  GL:
+    lr: 1e-4
+  decoder:
+    lr: 1e-4
 
-GL:
   env_height: 8
   env_width: 16
   env_rows: 120

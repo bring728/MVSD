@@ -186,7 +186,7 @@ class MonoDirectLightModel(object):
         return int(step)
 
 
-class NDLModel(object):
+class SingleViewModel(object):
     def __init__(self, cfg, gpu, experiment, load_opt=True, load_scheduler=True, phase='TRAIN', is_DDP=True):
         self.mode = cfg.mode
         self.gpu = gpu
@@ -207,7 +207,6 @@ class NDLModel(object):
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=int(cfg.lrate_decay_steps),
                                                          gamma=float(cfg.lrate_decay_factor))
-
         self.start_step = self.load_from_ckpt(experiment, load_opt=load_opt, load_scheduler=load_scheduler)
 
         if self.is_DDP:
@@ -237,9 +236,7 @@ class NDLModel(object):
     def save_model(self, filename):
         to_save = {'optimizer': self.optimizer.state_dict(),
                    'scheduler': self.scheduler.state_dict(),
-                   }
-        if self.mode == 'normal' or self.mode == 'finetune':
-            to_save['normal_net'] = de_parallel(self.normal_net).state_dict()
+                   'normal_net': de_parallel(self.normal_net).state_dict()}
         if self.mode == 'DL' or self.mode == 'finetune':
             to_save['DL_net'] = de_parallel(self.DL_net).state_dict()
         torch.save(to_save, filename)
@@ -250,10 +247,10 @@ class NDLModel(object):
         else:
             to_load = torch.load(filename)
 
-        if load_opt:
-            self.optimizer.load_state_dict(to_load['optimizer'])
-        if load_scheduler:
-            self.scheduler.load_state_dict(to_load['scheduler'])
+        # if load_opt:
+        #     self.optimizer.load_state_dict(to_load['optimizer'])
+        # if load_scheduler:
+        #     self.scheduler.load_state_dict(to_load['scheduler'])
 
         self.normal_net.load_state_dict(to_load['normal_net'])
         print('normal loaded from ', filename)
@@ -275,10 +272,10 @@ class NDLModel(object):
         if len(ckpts) > 0:
             fpath = ckpts[-1]
             self.load_model(fpath, load_opt, load_scheduler)
-            step = fpath[-10:-4]
+            step = fpath.split('_')[-1].split('.')[0]
             print('Reloading from {}, starting at step={}'.format(fpath, step))
-            if step == 'latest':
-                step = 9999999
+            if step == 'latest' or step == 'best':
+                step = 0
         else:
             print('No ckpts found, training from scratch...')
             step = 0
@@ -343,10 +340,10 @@ class SG2env():
         cv2.waitKey(0)
         return envmaps
 
-
-class BRDFModel(object):
+class MultiViewModel(object):
     def __init__(self, cfg, gpu, experiment, load_opt=True, load_scheduler=True, phase='TRAIN', is_DDP=True):
         self.cfg = cfg
+        self.mode = cfg.mode
         self.gpu = gpu
         self.phase = phase
         self.is_DDP = is_DDP
@@ -355,8 +352,7 @@ class BRDFModel(object):
         root = osp.dirname(osp.dirname(experiment))
         self.normal_net = NormalNet(cfg.normal).to(device)
         self.DL_net = DirectLightingNet(cfg.DL).to(device)
-        # NDL_path = osp.join(root, 'stage1', cfg.DL.path, 'model_NDL_latest.pth')
-        NDL_path = osp.join(root, 'stage1', cfg.DL.path, 'model_NDL_036000.pth')
+        NDL_path = osp.join(root, 'stage1', cfg.stage1_path, 'model_singleview_best.pth')
         print('read Normal and DL from ', NDL_path)
         if self.is_DDP:
             NDL_ckpt = torch.load(NDL_path, map_location={'cuda:0': 'cuda:%d' % self.gpu})
@@ -371,32 +367,33 @@ class BRDFModel(object):
         self.DL_net.eval()
 
         # create feature extraction network
-        self.feature_net = Context_ResUNet(cfg.BRDF.context_feature).to(device)
-        self.brdf_net = MultiViewAggregation(cfg).to(device)
+        all_params = []
+        self.context_net = Context_ResUNet(cfg.BRDF.context_feature).to(device)
+        self.aggregation_net = MultiViewAggregation(cfg).to(device)
         self.brdf_refine_net = BRDFRefineNet(cfg).to(device)
 
-        all_params = [
-            {'params': self.feature_net.parameters(), 'lr': float(cfg.BRDF.context_feature.lr)},
-            {'params': self.brdf_net.parameters(), 'lr': float(cfg.BRDF.aggregation.lr)},
-            {'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.BRDF.refine.lr)},
-        ]
-        # stage = osp.basename(osp.dirname(experiment))
-        # if stage == 'stage3':
-        #     self.feature_GL_net =
-        # count_parameters(self.feature_net)
-        # optimizer and learning rate scheduler
-        self.optimizer = torch.optim.Adam(all_params)
+        if self.mode == 'BRDF' or self.mode == 'finetune':
+            all_params.append({'params': self.context_net.parameters(), 'lr': float(cfg.BRDF.context_feature.lr)})
+            all_params.append({'params': self.aggregation_net.parameters(), 'lr': float(cfg.BRDF.aggregation.lr)})
+            all_params.append({'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.BRDF.refine.lr)})
+        if self.mode == 'SVL' or self.mode == 'finetune':
+            self.GL_Net = GlobalLightingNet(cfg.SVL).to(device)
+            all_params.append({'params': self.GL_Net.parameters(), 'lr': float(cfg.SVL.GL.lr)})
+            # all_params.append({'params': self.GL_decoder.parameters(), 'lr': float(cfg.SVL.decoder.lr)})
 
+        self.optimizer = torch.optim.Adam(all_params)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=int(cfg.lrate_decay_steps),
                                                          gamma=float(cfg.lrate_decay_factor))
-
         self.start_step = self.load_from_ckpt(experiment, load_opt=load_opt, load_scheduler=load_scheduler)
 
         if self.is_DDP:
-            self.feature_net = torch.nn.parallel.DistributedDataParallel(self.feature_net, device_ids=[gpu], )
-            self.brdf_net = torch.nn.parallel.DistributedDataParallel(self.brdf_net, device_ids=[gpu], )
+            self.context_net = torch.nn.parallel.DistributedDataParallel(self.context_net, device_ids=[gpu], )
+            self.aggregation_net = torch.nn.parallel.DistributedDataParallel(self.aggregation_net, device_ids=[gpu], )
             self.brdf_refine_net = torch.nn.parallel.DistributedDataParallel(self.brdf_refine_net, device_ids=[gpu], )
+            if self.mode == 'SVL' or self.mode == 'finetune':
+                self.GL_Net = torch.nn.parallel.DistributedDataParallel(self.GL_Net, device_ids=[gpu], )
+                # self.GL_decoder = torch.nn.parallel.DistributedDataParallel(self.GL_decoder, device_ids=[gpu], )
 
         if phase == 'TRAIN':
             self.switch_to_train()
@@ -406,22 +403,35 @@ class BRDFModel(object):
             raise Exception('Unrecognized phase for data loader')
 
     def switch_to_eval(self):
-        self.brdf_net.eval()
-        self.feature_net.eval()
-        self.brdf_refine_net.eval()
+        if self.mode == 'BRDF' or self.mode == 'finetune':
+            self.context_net.eval()
+            self.aggregation_net.eval()
+            self.brdf_refine_net.eval()
+        if self.mode == 'SVL' or self.mode == 'finetune':
+            self.GL_Net.eval()
+            # self.GL_decoder.eval()
 
     def switch_to_train(self):
-        self.brdf_net.train()
-        self.feature_net.train()
-        self.brdf_refine_net.train()
+        if self.mode == 'BRDF' or self.mode == 'finetune':
+            self.context_net.train()
+            self.aggregation_net.train()
+            self.brdf_refine_net.train()
+        if self.mode == 'SVL' or self.mode == 'finetune':
+            self.GL_Net.train()
+            # self.GL_decoder.train()
 
     def save_model(self, filename):
         to_save = {'optimizer': self.optimizer.state_dict(),
                    'scheduler': self.scheduler.state_dict(),
-                   'brdf_net': de_parallel(self.brdf_net).state_dict(),
-                   'feature_net': de_parallel(self.feature_net).state_dict(),
+                   'context_net': de_parallel(self.context_net).state_dict(),
+                   'aggregation_net': de_parallel(self.aggregation_net).state_dict(),
                    'brdf_refine_net': de_parallel(self.brdf_refine_net).state_dict()
                    }
+
+        if self.mode == 'SVL' or self.mode == 'finetune':
+            to_save['GL_Net'] = de_parallel(self.GL_Net).state_dict()
+            # to_save['GL_decoder'] = de_parallel(self.GL_decoder).state_dict()
+
         torch.save(to_save, filename)
 
     def load_model(self, filename, load_opt=True, load_scheduler=True):
@@ -433,9 +443,15 @@ class BRDFModel(object):
             self.optimizer.load_state_dict(to_load['optimizer'])
         if load_scheduler:
             self.scheduler.load_state_dict(to_load['scheduler'])
-        self.brdf_net.load_state_dict(to_load['brdf_net'])
-        self.feature_net.load_state_dict(to_load['feature_net'])
+
+        self.context_net.load_state_dict(to_load['context_net'])
+        self.aggregation_net.load_state_dict(to_load['aggregation_net'])
         self.brdf_refine_net.load_state_dict(to_load['brdf_refine_net'])
+        print('BRDF loaded from ', filename)
+        if 'GL_Net' in to_load:
+            self.GL_Net.load_state_dict(to_load['GL_Net'])
+            # self.GL_decoder.load_state_dict(to_load['GL_decoder'])
+            print('GL Net loaded from ', filename)
 
     # def update_optim(self, global_step):
     #     n = int(global_step / self.cfg.lrate_decay_steps)

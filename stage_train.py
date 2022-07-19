@@ -8,11 +8,10 @@ from utils import *
 from loader import load_id_wandb, load_dataloader, load_model
 import os
 
-root = '/new_disk2/happily/Data'
+# root = '/new_disk2/happily/Data'
+root = '/home/happily/Data'
 
 def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume=False, run_id=None):
-    if debug:
-        os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
     if is_DDP:
         torch.distributed.init_process_group(backend='nccl', init_method='tcp://127.0.0.1:2918', world_size=num_gpu, rank=gpu)
         torch.cuda.set_device(gpu)
@@ -55,7 +54,7 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
             scaler.step(curr_model.optimizer)
             scaler.update()
             curr_model.scheduler.step()
-            # scalars_to_log['lr'] = curr_model.scheduler.get_last_lr()[0]
+            scalars_to_log['lr'] = curr_model.scheduler.get_last_lr()[0]
 
             if record_flag:
                 if global_step % cfg.i_print == 0:
@@ -86,4 +85,4 @@ if __name__ == "__main__":
     phase = 'TRAIN'
     is_DDP = False
     resume = False
-    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage1_0.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')
+    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage2_0.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')
