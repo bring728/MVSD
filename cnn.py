@@ -252,7 +252,6 @@ def make_layer3D(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stri
     return nn.Sequential(*layers)
 
 
-
 class NormalNet(nn.Module):
     def __init__(self, cfg):
         super(NormalNet, self).__init__()
@@ -261,9 +260,9 @@ class NormalNet(nn.Module):
         self.layer_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
         self.layer_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
         self.layer_d_5 = make_layer(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
-        self.layer_d_6 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
+        self.layer_d_6 = make_layer(in_ch=512, out_ch=1024, kernel=3, stride=1, num_group=64, norm_layer=cfg.norm_layer)
 
-        self.layer_u_1 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
+        self.layer_u_1 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
         self.layer_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
         self.layer_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
         self.layer_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=cfg.norm_layer)
@@ -283,8 +282,7 @@ class NormalNet(nn.Module):
 
         dx1 = self.layer_u_1(x6)
         dx2 = self.layer_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        if not dx2.size() == x4:
-            dx2 = F.interpolate(dx2, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
+        dx2 = F.interpolate(dx2, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
         dx3 = self.layer_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx4 = self.layer_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx5 = self.layer_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
@@ -301,19 +299,18 @@ class DirectLightingNet(nn.Module):
         super(DirectLightingNet, self).__init__()
         self.SGNum = cfg.SGNum
 
-        self.layer_d_1 = make_layer(pad_type='rep', in_ch=8, out_ch=32, kernel=4, stride=2, num_group=2, norm_layer=cfg.norm_layer)
-        self.layer_d_2 = make_layer(in_ch=32, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
-        self.layer_d_3 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
-        self.layer_d_4 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_d_5 = make_layer(in_ch=256, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_d_6 = make_layer(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
-        self.layer_d_7 = make_layer(in_ch=512, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
-        self.layer_d_8 = make_layer(in_ch=512, out_ch=1024, kernel=3, stride=1, num_group=64, norm_layer=cfg.norm_layer)
+        self.layer_d_1 = make_layer(pad_type='rep', in_ch=8, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
+        self.layer_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
+        self.layer_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
+        self.layer_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
+        self.layer_d_5 = make_layer(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
+        self.layer_d_6 = make_layer(in_ch=512, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
+        self.layer_d_7 = make_layer(in_ch=512, out_ch=1024, kernel=3, stride=1, num_group=64, norm_layer=cfg.norm_layer)
 
-        activation_func = nn.ELU(inplace=True)
-        self.layer_intensity = nn.Sequential(nn.Linear(1024, 128), activation_func,
-                                             nn.Linear(128, 128), activation_func,
-                                             nn.Linear(128, 128), activation_func,
+        self.layer_d_light = make_layer(in_ch=1024, out_ch=1024, kernel=3, stride=1, num_group=64, norm_layer=cfg.norm_layer)
+        self.layer_intensity = nn.Sequential(nn.Linear(1024, 128), nn.ReLU(inplace=True),
+                                             nn.Linear(128, 128), nn.ReLU(inplace=True),
+                                             nn.Linear(128, 128), nn.ReLU(inplace=True),
                                              nn.Linear(128, cfg.SGNum * 3),
                                              )
 
@@ -344,33 +341,34 @@ class DirectLightingNet(nn.Module):
         x4 = self.layer_d_4(x3)
         x5 = self.layer_d_5(x4)
         x6 = self.layer_d_6(x5)
-        x7 = self.layer_d_7(x6)
-        x8 = self.layer_d_8(x7)
-        x_color = F.adaptive_avg_pool2d(x8, (1, 1))[..., 0, 0]
+        x_encoded = self.layer_d_7(x6)
+
+        x_light = self.layer_d_light(x_encoded)
+        x_color = F.adaptive_avg_pool2d(x_light, (1, 1))[..., 0, 0]
         intensity = torch.tanh(self.layer_intensity(x_color))
 
-        dx1 = self.layer_axis_u_1(x8)
-        dx2 = self.layer_axis_u_2(F.interpolate(torch.cat([dx1, x7], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx2 = F.interpolate(dx2, [x6.size(2), x6.size(3)], mode='bilinear', align_corners=False)
-        dx3 = self.layer_axis_u_3(F.interpolate(torch.cat([dx2, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = F.interpolate(dx3, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
-        dx4 = self.layer_axis_u_4(F.interpolate(torch.cat([dx3, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx1 = self.layer_axis_u_1(x_encoded)
+        dx2 = self.layer_axis_u_2(F.interpolate(torch.cat([dx1, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = F.interpolate(dx2, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
+        dx3 = self.layer_axis_u_3(F.interpolate(torch.cat([dx2, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx3 = F.interpolate(dx3, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
+        dx4 = self.layer_axis_u_4(F.interpolate(torch.cat([dx3, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         axis_out = torch.tanh(self.layer_axis_final(dx4))
 
-        dx1 = self.layer_sharp_u_1(x8)
-        dx2 = self.layer_sharp_u_2(F.interpolate(torch.cat([dx1, x7], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx2 = F.interpolate(dx2, [x6.size(2), x6.size(3)], mode='bilinear', align_corners=False)
-        dx3 = self.layer_sharp_u_3(F.interpolate(torch.cat([dx2, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = F.interpolate(dx3, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
-        dx4 = self.layer_sharp_u_4(F.interpolate(torch.cat([dx3, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx1 = self.layer_sharp_u_1(x_encoded)
+        dx2 = self.layer_sharp_u_2(F.interpolate(torch.cat([dx1, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = F.interpolate(dx2, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
+        dx3 = self.layer_sharp_u_3(F.interpolate(torch.cat([dx2, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx3 = F.interpolate(dx3, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
+        dx4 = self.layer_sharp_u_4(F.interpolate(torch.cat([dx3, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         sharp_out = torch.tanh(self.layer_sharp_final(dx4))
 
-        dx1 = self.layer_vis_u_1(x8)
-        dx2 = self.layer_vis_u_2(F.interpolate(torch.cat([dx1, x7], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx2 = F.interpolate(dx2, [x6.size(2), x6.size(3)], mode='bilinear', align_corners=False)
-        dx3 = self.layer_vis_u_3(F.interpolate(torch.cat([dx2, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = F.interpolate(dx3, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
-        dx4 = self.layer_vis_u_4(F.interpolate(torch.cat([dx3, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx1 = self.layer_vis_u_1(x_encoded)
+        dx2 = self.layer_vis_u_2(F.interpolate(torch.cat([dx1, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = F.interpolate(dx2, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
+        dx3 = self.layer_vis_u_3(F.interpolate(torch.cat([dx2, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx3 = F.interpolate(dx3, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
+        dx4 = self.layer_vis_u_4(F.interpolate(torch.cat([dx3, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         vis_out = torch.tanh(self.layer_vis_final(dx4))
 
         bn, _, row, col = vis_out.size()

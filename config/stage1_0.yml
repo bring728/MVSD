@@ -1,6 +1,8 @@
+mode: normal
+
 nepoch: 80
-batchsize: 16
-num_workers: 5
+batchsize: 8
+num_workers: 3
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
 lambda_mse: 0.3
@@ -28,7 +30,7 @@ pinned: True
 randomseed: 2245
 i_img: 100
 i_img_up: 1.2
-i_save: 3000
+i_save: 4000
 i_print: 10
 
 

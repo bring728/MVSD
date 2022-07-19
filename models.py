@@ -185,19 +185,24 @@ class MonoDirectLightModel(object):
             step = 0
         return int(step)
 
+
 class NDLModel(object):
     def __init__(self, cfg, gpu, experiment, load_opt=True, load_scheduler=True, phase='TRAIN', is_DDP=True):
+        self.mode = cfg.mode
         self.gpu = gpu
         self.phase = phase
         self.is_DDP = is_DDP
         device = torch.device('cuda:{}'.format(gpu))
 
+        all_params = []
         self.normal_net = NormalNet(cfg.normal).to(device)
-        self.DL_net = DirectLightingNet(cfg.DL).to(device)
-        all_params = [
-            {'params': self.normal_net.parameters(), 'lr': float(cfg.normal.lr)},
-            {'params': self.DL_net.parameters(), 'lr': float(cfg.DL.lr)},
-        ]
+        if self.mode == 'normal' or self.mode == 'finetune':
+            all_params.append({'params': self.normal_net.parameters(), 'lr': float(cfg.normal.lr)})
+
+        if self.mode == 'DL' or self.mode == 'finetune':
+            self.DL_net = DirectLightingNet(cfg.DL).to(device)
+            all_params.append({'params': self.DL_net.parameters(), 'lr': float(cfg.DL.lr)})
+
         self.optimizer = torch.optim.Adam(all_params)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=int(cfg.lrate_decay_steps),
@@ -207,7 +212,8 @@ class NDLModel(object):
 
         if self.is_DDP:
             self.normal_net = torch.nn.parallel.DistributedDataParallel(self.normal_net, device_ids=[gpu], )
-            self.DL_net = torch.nn.parallel.DistributedDataParallel(self.DL_net, device_ids=[gpu], )
+            if self.mode == 'DL' or self.mode == 'finetune':
+                self.DL_net = torch.nn.parallel.DistributedDataParallel(self.DL_net, device_ids=[gpu], )
 
         if phase == 'TRAIN':
             self.switch_to_train()
@@ -217,19 +223,25 @@ class NDLModel(object):
             raise Exception('Unrecognized phase for data loader')
 
     def switch_to_eval(self):
-        self.DL_net.eval()
-        self.normal_net.eval()
+        if self.mode == 'normal' or self.mode == 'finetune':
+            self.normal_net.eval()
+        if self.mode == 'DL' or self.mode == 'finetune':
+            self.DL_net.eval()
 
     def switch_to_train(self):
-        self.DL_net.train()
-        self.normal_net.train()
+        if self.mode == 'normal' or self.mode == 'finetune':
+            self.normal_net.train()
+        if self.mode == 'DL' or self.mode == 'finetune':
+            self.DL_net.train()
 
     def save_model(self, filename):
         to_save = {'optimizer': self.optimizer.state_dict(),
                    'scheduler': self.scheduler.state_dict(),
-                   'normal_net': de_parallel(self.normal_net).state_dict(),
-                   'DL_net': de_parallel(self.DL_net).state_dict(),
                    }
+        if self.mode == 'normal' or self.mode == 'finetune':
+            to_save['normal_net'] = de_parallel(self.normal_net).state_dict()
+        if self.mode == 'DL' or self.mode == 'finetune':
+            to_save['DL_net'] = de_parallel(self.DL_net).state_dict()
         torch.save(to_save, filename)
 
     def load_model(self, filename, load_opt=True, load_scheduler=True):
@@ -242,9 +254,12 @@ class NDLModel(object):
             self.optimizer.load_state_dict(to_load['optimizer'])
         if load_scheduler:
             self.scheduler.load_state_dict(to_load['scheduler'])
-        self.DL_net.load_state_dict(to_load['DL_net'])
-        self.normal_net.load_state_dict(to_load['normal_net'])
 
+        self.normal_net.load_state_dict(to_load['normal_net'])
+        print('normal loaded from ', filename)
+        if 'DL_net' in to_load:
+            self.DL_net.load_state_dict(to_load['DL_net'])
+            print('DL loaded from ', filename)
 
     def load_from_ckpt(self, out_folder, load_opt=False, load_scheduler=False):
         '''
@@ -311,7 +326,6 @@ class SG2env():
         sharp = 0.999 * sharpOrig
         sharp = torch.tan(np.pi / 2 * sharp)
         return sharp, intensity
-
 
     def forward_test(self, axis, sharpOrig, intensityOrig, vis):
         intensity = 0.999 * intensityOrig

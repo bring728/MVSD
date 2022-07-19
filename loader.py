@@ -13,7 +13,7 @@ import yaml
 import wandb
 
 
-def load_id_wandb(config, record_flag, resume, root, id=None, resume_eval=False):
+def load_id_wandb(config, record_flag, resume, root, id=None):
     stage = config.split('stage')[1].split('_')[0]
     if stage == '1-1':
         model_type = 'normal'
@@ -49,12 +49,8 @@ def load_id_wandb(config, record_flag, resume, root, id=None, resume_eval=False)
             #         print('config does not match.')
             #         raise Exception('config does not match.')
     else:
-        if resume_eval:
-            run_id = f'{id}_eval'
-
-        else:
-            current_time = datetime.now().strftime('%m%d%H%M')
-            run_id = f'{current_time}_stage{stage}'
+        current_time = datetime.now().strftime('%m%d%H%M')
+        run_id = f'{current_time}_stage{stage}'
         if record_flag:
             wandb_obj = wandb.init(project=f'MVSD-stage{stage}', id=run_id)
             wandb_obj.config.update(cfg)
@@ -101,22 +97,16 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
     helper_dict = {}
     curr_model = None
 
-    if stage == '1-1':
-        curr_model = MonoNormalModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
-        if do_watch:
-            print(gpu, 'watch')
-            wandb_obj.watch(curr_model.normal_net)
-
-    elif stage == '1-2':
-        helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
-        curr_model = MonoDirectLightModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
-        if do_watch:
-            wandb_obj.watch(curr_model.DL_net)
-    elif stage == '1':
+    if stage == '1':
         helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
         curr_model = NDLModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
         if do_watch:
-            wandb_obj.watch(curr_model.DL_net)
+            watch_model = []
+            if cfg.mode == 'normal' or cfg.mode == 'finetune':
+                watch_model.append(curr_model.normal_net)
+            if cfg.mode == 'DL' or cfg.mode == 'finetune':
+                watch_model.append(curr_model.DL_net)
+            wandb_obj.watch(watch_model, log='all')
 
     elif stage == '2':
         helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
