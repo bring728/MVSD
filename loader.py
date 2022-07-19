@@ -66,8 +66,7 @@ def load_id_wandb(config, record_flag, resume, root, id=None, resume_eval=False)
 
 
 def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag):
-    # worker_per_gpu = cfg.num_workers
-    worker_per_gpu = 0
+    worker_per_gpu = cfg.num_workers
     batch_per_gpu = cfg.batchsize
     if stage.startswith('1'):
         train_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TRAIN')

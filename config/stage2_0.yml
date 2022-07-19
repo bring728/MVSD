@@ -5,11 +5,11 @@ lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
 
 normal:
-  path: 07062049_stage1-1
+  path: 07171046_stage1
   norm_layer: group
 
 DL:
-  path: 07082120_stage1-2
+  path: 07171046_stage1
   unified_decoder: False
   norm_layer: batch
   SGNum: 4
@@ -23,12 +23,8 @@ BRDF:
   gt: False
   lambda_albedo: 3.0
   lambda_rough: 1.0
-  lambda_conf: 0.2
 
   context_feature:
-#    arch: resunet
-    arch: unet
-    input: rgbdc
     dim: 32
     norm_layer: group
     lr: 1e-4
@@ -45,8 +41,6 @@ BRDF:
     lr: 1e-4
 
   refine:
-    context_concat: True
-    use: True
     lr: 1e-4
     norm_layer: group
 
@@ -60,8 +54,8 @@ GL:
   env_rows: 120
   env_cols: 160
 
-imWidth: 640
-imHeight: 480
+imWidth: 320
+imHeight: 240
 num_view_all: 9
 num_view_min: 6
 autocast: True

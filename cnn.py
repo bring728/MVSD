@@ -11,11 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.cuda.amp.autocast_mode import autocast
 from utils import *
-
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -34,6 +34,8 @@ class BasicBlock(nn.Module):
     def __init__(self, inplanes, planes, stride=1, downsample=None, groups=1,
                  base_width=64, dilation=1, norm_layer=None):
         super(BasicBlock, self).__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm2d
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
         if dilation > 1:
@@ -96,10 +98,9 @@ class upconv(nn.Module):
 class Context_ResUNet(nn.Module):
     def __init__(self, cfg):
         super(Context_ResUNet, self).__init__()
-        filters = [128, 256, 512, 1024]
-
-        # original
-        layers = [3, 4, 4, 3, 2]
+        filters = [64, 128, 256, 512]
+        layers = [2, 2, 2, 2]
+        # norm_layer = nn.BatchNorm2d
         norm_layer = nn.InstanceNorm2d
         self._norm_layer = norm_layer
         self.dilation = 1
@@ -108,26 +109,21 @@ class Context_ResUNet(nn.Module):
         self.inplanes = 64
         self.groups = 1
         self.base_width = 64
-        if cfg.input == 'rgb':
-            self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
-                                   bias=False, padding_mode='reflect')
-        else:
-            self.conv1 = nn.Conv2d(5, self.inplanes, kernel_size=7, stride=2, padding=3,
-                                   bias=False, padding_mode='reflect')
+        self.conv1 = nn.Conv2d(8, self.inplanes, kernel_size=7, stride=2, padding=3,
+                               bias=False, padding_mode='reflect')
         self.bn1 = norm_layer(self.inplanes, track_running_stats=False, affine=True)
         self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, filters[0], layers[0], stride=2)
-        self.layer2 = self._make_layer(block, filters[1], layers[1], stride=2, dilate=replace_stride_with_dilation[0])
-        self.layer3 = self._make_layer(block, filters[2], layers[2], stride=2, dilate=replace_stride_with_dilation[1])
-        self.layer4 = self._make_layer(block, filters[3], layers[3], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer1 = self._make_layer(block, 64, layers[0], stride=2)
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
+                                       dilate=replace_stride_with_dilation[0])
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
+                                       dilate=replace_stride_with_dilation[1])
 
         # decoder
-        self.upconv4 = upconv(filters[3], filters[2], 3, 2)
-        self.iconv4 = conv(filters[2] + filters[2], filters[2], 3, 1)
-        self.upconv3 = upconv(filters[2], filters[1], 3, 2)
-        self.iconv3 = conv(filters[1] + filters[1], filters[1], 3, 1)
-        self.upconv2 = upconv(filters[1], filters[0], 3, 2)
-        self.iconv2 = conv(filters[0] + filters[0], cfg.dim, 3, 1)
+        self.upconv3 = upconv(filters[2], 128, 3, 2)
+        self.iconv3 = conv(filters[1] + 128, 128, 3, 1)
+        self.upconv2 = upconv(128, 64, 3, 2)
+        self.iconv2 = conv(filters[0] + 64, cfg.dim, 3, 1)
 
         # fine-level conv
         self.out_conv = nn.Conv2d(cfg.dim, cfg.dim, 1, 1)
@@ -153,6 +149,7 @@ class Context_ResUNet(nn.Module):
             layers.append(block(self.inplanes, planes, groups=self.groups,
                                 base_width=self.base_width, dilation=self.dilation,
                                 norm_layer=norm_layer))
+
         return nn.Sequential(*layers)
 
     def skipconnect(self, x1, x2):
@@ -169,20 +166,14 @@ class Context_ResUNet(nn.Module):
         x = torch.cat([x2, x1], dim=1)
         return x
 
-    @autocast()
     def forward(self, x):
         x = self.relu(self.bn1(self.conv1(x)))
 
         x1 = self.layer1(x)
         x2 = self.layer2(x1)
-        x3 = self.layer3(x2)
-        x4 = self.layer4(x3)
+        x_encoded = self.layer3(x2)
 
-        x = self.upconv4(x4)
-        x = self.skipconnect(x3, x)
-        x = self.iconv4(x)
-
-        x = self.upconv3(x)
+        x = self.upconv3(x_encoded)
         x = self.skipconnect(x2, x)
         x = self.iconv3(x)
 
@@ -191,7 +182,7 @@ class Context_ResUNet(nn.Module):
         x = self.iconv2(x)
 
         x_out = self.out_conv(x)
-        return x_out
+        return x_encoded, x_out
 
 
 def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride=1, num_group=4, act='relu', norm_layer='group'):
@@ -203,8 +194,6 @@ def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride
         padding_mode = 'replicate'
     elif pad_type == 'zeros':
         padding_mode = 'zeros'
-    else:
-        assert 'not implemented pad'
     layers.append(
         nn.Conv2d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel, stride=stride, bias=norm_layer != 'batch',
                   padding_mode=padding_mode, padding=padding))
@@ -405,43 +394,6 @@ class DirectLightingNet(nn.Module):
         return axis, sharp, intensity, vis
 
 
-class Context_UNet(nn.Module):
-    def __init__(self, cfg):
-        super(Context_UNet, self).__init__()
-        if cfg.input == 'rgb':
-            in_ch = 3
-        else:
-            in_ch = 5
-        self.layer_d_1 = make_layer(pad_type='rep', in_ch=in_ch, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
-        self.layer_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
-        self.layer_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_d_5 = make_layer(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=cfg.norm_layer)
-        self.layer_d_6 = make_layer(in_ch=512, out_ch=1024, kernel=3, stride=1, num_group=64, norm_layer=cfg.norm_layer)
-
-        self.layer_u_1 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=cfg.norm_layer)
-        self.layer_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=cfg.norm_layer)
-        self.layer_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=cfg.norm_layer)
-        self.layer_final = make_layer(pad_type='rep', in_ch=128, out_ch=cfg.dim, kernel=3, stride=1, act='None', norm_layer='None')
-
-    @autocast()
-    def forward(self, x):
-        x1 = self.layer_d_1(x)
-        x2 = self.layer_d_2(x1)
-        x3 = self.layer_d_3(x2)
-        x4 = self.layer_d_4(x3)
-        x5 = self.layer_d_5(x4)
-        encoded_x = self.layer_d_6(x5)
-
-        dx1 = self.layer_u_1(encoded_x)
-        dx2 = self.layer_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = self.layer_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx4 = self.layer_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        x_out = self.layer_final(dx4)
-        return encoded_x, x_out
-
-
 class Context_GLNet(nn.Module):
     def __init__(self, cfg):
         super(Context_GLNet, self).__init__()
@@ -474,32 +426,30 @@ class Context_GLNet(nn.Module):
 class BRDFRefineNet(nn.Module):
     def __init__(self, cfg):
         super(BRDFRefineNet, self).__init__()
-        input_ch = cfg.BRDF.aggregation.final_hidden + 5
-        if cfg.BRDF.refine.context_concat:
-            input_ch += cfg.BRDF.context_feature.dim
+        input_ch = cfg.BRDF.aggregation.final_hidden + 8 + cfg.BRDF.context_feature.dim
         norm_layer = cfg.BRDF.refine.norm_layer
-        self.refine_d_1 = make_layer(pad_type='rep', in_ch=input_ch, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer='batch')
-        self.refine_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=norm_layer)
+        self.refine_d_1 = make_layer(pad_type='rep', in_ch=input_ch, out_ch=128, kernel=4, stride=2, norm_layer='batch')
+        self.refine_d_2 = make_layer(in_ch=128, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=norm_layer)
         self.refine_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
         self.refine_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
         self.refine_d_5 = make_layer(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=norm_layer)
-        self.refine_d_6 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
+        self.refine_d_6 = make_layer(in_ch=512, out_ch=1024, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
 
-        self.refine_albedo_u_1 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
+        self.refine_albedo_u_1 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
         self.refine_albedo_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
         self.refine_albedo_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
         self.refine_albedo_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=norm_layer)
-        self.refine_albedo_u_5 = make_layer(in_ch=256, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_albedo_u_6 = make_layer(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_albedo_final = make_layer(pad_type='rep', in_ch=64, out_ch=3, kernel=3, stride=1, act='None', norm_layer='None')
+        self.refine_albedo_u_5 = make_layer(in_ch=256, out_ch=128, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+        self.refine_albedo_u_6 = make_layer(in_ch=256, out_ch=128, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+        self.refine_albedo_final = make_layer(pad_type='rep', in_ch=128, out_ch=3, kernel=3, stride=1, act='None', norm_layer='None')
 
-        self.refine_rough_u_1 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
+        self.refine_rough_u_1 = make_layer(in_ch=1024, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
         self.refine_rough_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
         self.refine_rough_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
         self.refine_rough_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=norm_layer)
-        self.refine_rough_u_5 = make_layer(in_ch=256, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_rough_u_6 = make_layer(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_rough_final = make_layer(pad_type='rep', in_ch=64, out_ch=1, kernel=3, stride=1, act='None', norm_layer='None')
+        self.refine_rough_u_5 = make_layer(in_ch=256, out_ch=128, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+        self.refine_rough_u_6 = make_layer(in_ch=256, out_ch=128, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
+        self.refine_rough_final = make_layer(pad_type='rep', in_ch=128, out_ch=3, kernel=3, stride=1, act='None', norm_layer='None')
 
     @autocast()
     def forward(self, x):
@@ -512,6 +462,7 @@ class BRDFRefineNet(nn.Module):
 
         dx1 = self.refine_albedo_u_1(x6)
         dx2 = self.refine_albedo_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = F.interpolate(dx2, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
         dx3 = self.refine_albedo_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx4 = self.refine_albedo_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx5 = self.refine_albedo_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
@@ -521,12 +472,14 @@ class BRDFRefineNet(nn.Module):
 
         dx1 = self.refine_rough_u_1(x6)
         dx2 = self.refine_rough_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = F.interpolate(dx2, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
         dx3 = self.refine_rough_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx4 = self.refine_rough_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx5 = self.refine_rough_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         dx6 = self.refine_rough_u_6(F.interpolate(torch.cat([dx5, x1], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
         rough = self.refine_rough_final(dx6)
         rough = 0.5 * (torch.clamp(1.01 * torch.tanh(rough), -1, 1) + 1)
+        rough = torch.mean(rough, dim=1, keepdim=True)
         return albedo, rough
 
 

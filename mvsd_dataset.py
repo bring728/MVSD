@@ -61,14 +61,14 @@ class Openrooms_FF(Dataset):
         if not cam_mats.shape == (3, 6, 9):
             raise Exception(scene, ' cam mat shape error!')
 
-        target_im = loadHdr(name_list[0].format('im', 'rgbe'))
+        target_im = loadHdr(name_list[0].format('im', 'hdr'))
         seg = loadImage(name_list[0].format('immask', 'png'))[0:1, :, :]
         scene_scale = get_hdr_scale(target_im, seg, self.phase)
 
-        segObj = (seg > 0.9)
-        if self.stage == '3':
-            segObj = ndimage.binary_erosion(segObj.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
-        batchDict['mask'] = segObj  # segBRDF
+        segObj_stage2 = (seg > 0.9)
+        segObj_stage3 = ndimage.binary_erosion(segObj_stage2.squeeze(), structure=np.ones((7, 7)), border_value=1)[np.newaxis, :, :]
+        seg = np.concatenate([segObj_stage2, segObj_stage3], axis=0).astype(np.float32)
+        batchDict['mask'] = seg  # segBRDF
 
         src_c2w_list = []
         src_int_list = []
@@ -80,7 +80,7 @@ class Openrooms_FF(Dataset):
         depth_norm_list = []
         for name, idx in zip(name_list, all_idx):
             idx = int(idx) - 1
-            im = loadHdr(name.format('im', 'rgbe'))
+            im = loadHdr(name.format('im', 'hdr'))
             im = np.clip(im * scene_scale, 0, 1.0)
             rgb_list.append(im)
             poses_hwf_bounds = cam_mats[..., idx]

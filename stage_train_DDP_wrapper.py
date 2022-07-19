@@ -13,7 +13,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         num_gpu = 8
-        config = 'stage1_0.yml'
+        config = 'stage2_0.yml'
     else:
         num_gpu = int(sys.argv[1])
         config = sys.argv[2]

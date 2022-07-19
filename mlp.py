@@ -132,13 +132,7 @@ class MultiViewAggregation(nn.Module):
             VdotN = torch.sum(view_dir * normal, dim=-1, keepdim=True).unsqueeze(-2).expand(-1, -1, -1, -1, self.cfg.DL.SGNum, -1)
             pbr_batch = torch.cat([torch.cat([DLdotN, DL[..., 3:]], dim=-1).expand(-1, -1, -1, num_views, -1, -1), fresnel, VdotN], dim=-1)
         # pbr_feature = self.pbr_mlp(pbr_batch).reshape(bn, h, w, num_views, -1)
-        if self.cfg.BRDF.aggregation.pbr_collect == 'max':
-            pbr_feature = torch.max(self.pbr_mlp(pbr_batch), dim=-2)[0]
-        elif self.cfg.BRDF.aggregation.pbr_collect == 'sum':
-            pbr_feature = torch.sum(self.pbr_mlp(pbr_batch), dim=-2)
-        else:
-            pbr_feature = None
-
+        pbr_feature = torch.sum(self.pbr_mlp(pbr_batch), dim=-2)
         rgb_feat_pbr = torch.cat([rgb, featmaps_dense.expand(-1, -1, -1, num_views, -1), pbr_feature], dim=-1)
         brdf_feature = self.transformer(rgb_feat_pbr, weight)
         return brdf_feature

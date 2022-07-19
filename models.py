@@ -341,22 +341,15 @@ class BRDFModel(object):
         root = osp.dirname(osp.dirname(experiment))
         self.normal_net = NormalNet(cfg.normal).to(device)
         self.DL_net = DirectLightingNet(cfg.DL).to(device)
-        if cfg.normal.path == None:
-            cfg.normal.path = osp.join(osp.join(root, 'stage1-1'), sorted(os.listdir(osp.join(root, 'stage1-1')))[-1])
-        if cfg.DL.path == None:
-            cfg.DL.path = osp.join(osp.join(root, 'stage1-1'), sorted(os.listdir(osp.join(root, 'stage1-2')))[-1])
-        normal_path = osp.join(root, 'stage1-1', cfg.normal.path, 'model_normal_latest.pth')
-        print('staeg 1-1 load from ', normal_path)
-        DL_path = osp.join(root, 'stage1-2', cfg.DL.path, 'model_DL_latest.pth')
-        print('staeg 1-2 load from ', DL_path)
+        # NDL_path = osp.join(root, 'stage1', cfg.DL.path, 'model_NDL_latest.pth')
+        NDL_path = osp.join(root, 'stage1', cfg.DL.path, 'model_NDL_036000.pth')
+        print('read Normal and DL from ', NDL_path)
         if self.is_DDP:
-            normal_ckpt = torch.load(normal_path, map_location={'cuda:0': 'cuda:%d' % self.gpu})
-            DL_ckpt = torch.load(DL_path, map_location={'cuda:0': 'cuda:%d' % self.gpu})
+            NDL_ckpt = torch.load(NDL_path, map_location={'cuda:0': 'cuda:%d' % self.gpu})
         else:
-            normal_ckpt = torch.load(normal_path)
-            DL_ckpt = torch.load(DL_path)
-        self.normal_net.load_state_dict(normal_ckpt['normal_net'])
-        self.DL_net.load_state_dict(DL_ckpt['DL_net'])
+            NDL_ckpt = torch.load(NDL_path)
+        self.normal_net.load_state_dict(NDL_ckpt['normal_net'])
+        self.DL_net.load_state_dict(NDL_ckpt['DL_net'])
         if self.is_DDP:
             self.normal_net = torch.nn.parallel.DistributedDataParallel(self.normal_net, device_ids=[gpu], )
             self.DL_net = torch.nn.parallel.DistributedDataParallel(self.DL_net, device_ids=[gpu], )
@@ -364,26 +357,19 @@ class BRDFModel(object):
         self.DL_net.eval()
 
         # create feature extraction network
-        if cfg.BRDF.context_feature.arch == 'resunet':
-            self.feature_net = Context_ResUNet(cfg.BRDF.context_feature).to(device)
-        elif cfg.BRDF.context_feature.arch == 'unet':
-            self.feature_net = Context_UNet(cfg.BRDF.context_feature).to(device)
-        else:
-            raise Exception('arch error')
+        self.feature_net = Context_ResUNet(cfg.BRDF.context_feature).to(device)
         self.brdf_net = MultiViewAggregation(cfg).to(device)
         self.brdf_refine_net = BRDFRefineNet(cfg).to(device)
 
         all_params = [
-            {'params': self.brdf_net.parameters(), 'lr': float(cfg.BRDF.aggregation.lr)},
             {'params': self.feature_net.parameters(), 'lr': float(cfg.BRDF.context_feature.lr)},
+            {'params': self.brdf_net.parameters(), 'lr': float(cfg.BRDF.aggregation.lr)},
             {'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.BRDF.refine.lr)},
         ]
-        stage = osp.basename(osp.dirname(experiment))
+        # stage = osp.basename(osp.dirname(experiment))
         # if stage == 'stage3':
         #     self.feature_GL_net =
-
         # count_parameters(self.feature_net)
-
         # optimizer and learning rate scheduler
         self.optimizer = torch.optim.Adam(all_params)
 
