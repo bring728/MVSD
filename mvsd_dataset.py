@@ -62,6 +62,7 @@ class Openrooms_FF(Dataset):
         if not cam_mats.shape == (3, 6, 9):
             raise Exception(scene, ' cam mat shape error!')
 
+        max_depth = cam_mats[1, -1, int(target_idx) - 1].astype(np.float32)
         target_im = loadHdr(name_list[0].format('im', 'hdr'))
         seg = loadImage(name_list[0].format('immask', 'png'))[0:1, :, :]
         scene_scale = get_hdr_scale(target_im, seg, self.phase)
@@ -77,8 +78,7 @@ class Openrooms_FF(Dataset):
         depthest_list = []
         depthgt_list = []
         # conf_list = []
-        conf = loadBinary(name_list[0].format('conf', 'dat'))
-        depth_norm_list = []
+        # depth_norm_list = []
         for name, idx in zip(name_list, all_idx):
             idx = int(idx) - 1
             im = loadHdr(name.format('im', 'hdr'))
@@ -95,8 +95,9 @@ class Openrooms_FF(Dataset):
             if self.cfg.BRDF.gt:
                 depthgt = loadBinary(name.format('imdepth', 'dat'))
                 depthgt_list.append(depthgt)
-            depth_norm = np.clip(depthest / poses_hwf_bounds[1, -1], 0, 1)
-            depth_norm_list.append(depth_norm)
+
+        conf = loadBinary(name_list[0].format('conf', 'dat'))
+        depth_norm = np.clip(depthest_list[0] / max_depth, 0, 1)
 
         batchDict['rgb'] = np.stack(rgb_list, 0).astype(np.float32)
         batchDict['depth_est'] = np.stack(depthest_list, 0).astype(np.float32)
@@ -104,11 +105,12 @@ class Openrooms_FF(Dataset):
             batchDict['depth_gt'] = np.stack(depthgt_list, 0).astype(np.float32)
         # batchDict['conf'] = np.stack(conf_list, 0).astype(np.float32)
         batchDict['conf'] = conf.astype(np.float32)
-        batchDict['depth_norm'] = np.stack(depth_norm_list, 0).astype(np.float32)
+        batchDict['depth_norm'] = depth_norm.astype(np.float32)
         batchDict['cam'] = np.stack(src_int_list, 0).astype(np.float32)
         # recenter to cam_0
         w2target = np.linalg.inv(src_c2w_list[0])
         batchDict['c2w'] = (w2target @ np.stack(src_c2w_list, 0)).astype(np.float32)
+        batchDict['max_depth'] = max_depth.reshape(1, 1, 1, 1)
 
         # scene scale changes during training time
         # normal_est = loadH5(name_list[0].format('normalest', 'h5'))
@@ -122,8 +124,10 @@ class Openrooms_FF(Dataset):
         batchDict['rough_gt'] = rough
 
         if self.mode == 'SVL' or self.mode == 'finetune':
-            envmaps = loadEnvmap(name_list[0].replace('_320','_env').format('imenv', 'hdr'), self.cfg.SVL.env_height, self.cfg.SVL.env_width,
-                                             self.cfg.SVL.env_rows, self.cfg.SVL.env_cols)
+            envmaps = loadEnvmap(name_list[0].replace('_320', '').format('imenv', 'hdr'), self.cfg.SVL.env_height,
+                                 self.cfg.SVL.env_width, self.cfg.SVL.env_rows, self.cfg.SVL.env_cols)
+            # envmaps = loadEnvmap(name_list[0].replace('_320', '_env').format('imenv', 'hdr'), self.cfg.SVL.env_height,
+            #                      self.cfg.SVL.env_width, self.cfg.SVL.env_rows, self.cfg.SVL.env_cols)
             envmaps = envmaps * scene_scale
             batchDict['envmaps_gt'] = envmaps.astype(np.float32)
         return batchDict
@@ -213,11 +217,10 @@ class Openrooms_FF_single(Dataset):
         batchDict['normal_gt'] = normal
         if self.mode == 'DL' or self.mode == 'finetune':
             envmaps = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
-                                             self.cfg.DL.env_rows, self.cfg.DL.env_cols)
+                                 self.cfg.DL.env_rows, self.cfg.DL.env_cols)
             envmaps = envmaps * scene_scale
             batchDict['envmaps_gt'] = envmaps.astype(np.float32)
         return batchDict
-
 
 # class Openrooms_LMDB_single(Dataset):
 #     def __init__(self, db_path, cfg, stage, gpu, lock):

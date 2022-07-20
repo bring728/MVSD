@@ -100,7 +100,7 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
 
     elif stage == '2':
         helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
-        u, v = np.meshgrid(np.arange(cfg.imWidth), np.arange(cfg.imHeight))
+        u, v = np.meshgrid(np.arange(cfg.imWidth), np.arange(cfg.imHeight), indexing='xy')
         # u = u.reshape(-1).astype(dtype=np.float32) + 0.5  # add half pixel
         # u_n = 2.0 * u / cfg.imWidth - 1
         # v = v.reshape(-1).astype(dtype=np.float32) + 0.5
@@ -118,22 +118,23 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
         pixels_norm = pixels_norm.to(gpu, non_blocking=cfg.pinned)[None].expand([cfg.batchsize, -1, -1, -1])
         helper_dict['pixels_norm'] = pixels_norm
         curr_model = MultiViewModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
+        if cfg.mode == 'SVL' or cfg.mode == 'finetune':
+            x, y, z = np.meshgrid(np.arange(cfg.SVL.vsg_res), np.arange(cfg.SVL.vsg_res), np.arange(cfg.SVL.vsg_res), indexing='xy')
+            x = x.astype(dtype=np.float32) + 0.5  # add half pixel
+            x = 2.0 * x / cfg.SVL.vsg_res - 1
+            y = y.astype(dtype=np.float32) + 0.5
+            y = 2.0 * y / cfg.SVL.vsg_res - 1
+            z = z.astype(dtype=np.float32) + 0.5
+            z = 2.0 * z / cfg.SVL.vsg_res - 1
+            voxel_grid = np.stack([x, y, z], axis=-1)[:, :, cfg.SVL.vsg_res // 2:, :]
+            voxel_grid = torch.from_numpy(voxel_grid).to(gpu, non_blocking=cfg.pinned)[None].expand([cfg.batchsize, -1, -1, -1, -1])
+            helper_dict['voxel_grid'] = voxel_grid
+
         if do_watch:
             watch_model = []
             if cfg.mode == 'BRDF' or cfg.mode == 'finetune':
                 watch_model.append([curr_model.context_net, curr_model.aggregation_net, curr_model.brdf_refine_net])
             if cfg.mode == 'SVL' or cfg.mode == 'finetune':
-                helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
-                x, y, z = np.meshgrid(np.arange(cfg.SVL.vsg_dim), np.arange(cfg.SVL.vsg_dim), np.arange(cfg.SVL.vsg_dim), indexing='ij')
-                x = x.astype(dtype=np.float32) + 0.5  # add half pixel
-                x = 2.0 * x / cfg.SVL.vsg_dim - 1
-                y = y.astype(dtype=np.float32) + 0.5
-                y = 2.0 * y / cfg.SVL.vsg_dim - 1
-                z = z.astype(dtype=np.float32) + 0.5
-                z = 2.0 * z / cfg.SVL.vsg_dim - 1
-                voxel_grid = np.stack([x, y, z], axis=0)
-                voxel_grid = torch.from_numpy(voxel_grid).to(gpu, non_blocking=cfg.pinned)
-                helper_dict['voxels'] = voxel_grid
                 watch_model.append([curr_model.GL_Net])
             wandb_obj.watch(watch_model, log='all')
     return curr_model, helper_dict

@@ -45,9 +45,10 @@ BRDF:
     norm_layer: group
 
 SVL:
-  vsg_dim: 128
-  c_dim: 128
+  vsg_res: 128
+  context_lighting_dim: 128
   GL:
+    global_volume_dim: 128
     lr: 1e-4
   decoder:
     lr: 1e-4

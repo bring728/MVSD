@@ -9,7 +9,7 @@ from loader import load_id_wandb, load_dataloader, load_model
 import os
 
 # root = '/new_disk2/happily/Data'
-root = '/home/happily/Data'
+root = '/media/vig-titan-103/mybookduo'
 
 def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume=False, run_id=None):
     if is_DDP:

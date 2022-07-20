@@ -195,7 +195,9 @@ class GlobalLightingNet(nn.Module):
     def __init__(self, cfg, gpu, cube_res=32):
         super(GlobalLightingNet, self).__init__()
         self.cube_res = cube_res
-        x, y, z = np.meshgrid(np.arange(cube_res), np.arange(cube_res), np.arange(cube_res), indexing='ij')
+        self.out_dim = cfg.SVL.GL.global_volume_dim
+
+        x, y, z = np.meshgrid(np.arange(cube_res), np.arange(cube_res), np.arange(cube_res), indexing='xy')
         x = x.reshape(-1).astype(dtype=np.float32) + 0.5  # add half pixel
         x = 2.0 * x / cube_res - 1
         y = y.reshape(-1).astype(dtype=np.float32) + 0.5
@@ -207,8 +209,8 @@ class GlobalLightingNet(nn.Module):
         self.volume_coord.requires_grad = False
 
         self.layer_d_1 = make_layer(in_ch=512, out_ch=256, kernel=4, stride=2, num_group=64, norm_layer='instance')
-        self.layer_d_2 = make_layer(in_ch=256, out_ch=cfg.SVL.c_dim, kernel=4, stride=2, num_group=64, norm_layer='instance')
-        self.decoder = DecoderCBatchNorm2(c_dim=cfg.SVL.c_dim)
+        self.layer_d_2 = make_layer(in_ch=256, out_ch=cfg.SVL.context_lighting_dim, kernel=4, stride=2, num_group=64, norm_layer='instance')
+        self.decoder = DecoderCBatchNorm2(c_dim=cfg.SVL.context_lighting_dim, out_dim=self.out_dim)
 
     @autocast()
     def forward(self, x):
@@ -216,7 +218,7 @@ class GlobalLightingNet(nn.Module):
         x1 = self.layer_d_1(x)
         x2 = self.layer_d_2(x1)
         global_lighting_feature = F.adaptive_avg_pool2d(x2, (1, 1))[..., 0, 0]
-        global_feature_volume = torch.reshape(self.decoder(self.volume_coord, global_lighting_feature), [bn, self.cube_res, self.cube_res, self.cube_res])
+        global_feature_volume = self.decoder(self.volume_coord, global_lighting_feature).reshape([bn, self.out_dim, self.cube_res, self.cube_res, self.cube_res])
         return global_feature_volume
 
 

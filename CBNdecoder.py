@@ -167,14 +167,14 @@ class DecoderCBatchNorm2(nn.Module):
         n_blocks (int): number of ResNet blocks
     '''
 
-    def __init__(self, dim=3, c_dim=128, hidden_size=256, n_blocks=3):
+    def __init__(self, dim=3, c_dim=128, hidden_size=256, n_blocks=3, out_dim=32):
         super().__init__()
 
         self.conv_p = nn.Conv1d(dim, hidden_size, 1)
         self.blocks = nn.ModuleList([CResnetBlockConv1d(c_dim, hidden_size) for i in range(n_blocks)])
 
         self.bn = CBatchNorm1d(c_dim, hidden_size)
-        self.conv_out = nn.Conv1d(hidden_size, 1, 1)
+        self.conv_out = nn.Conv1d(hidden_size, out_dim, 1)
         self.actvn = nn.ReLU()
 
     @autocast()
@@ -186,6 +186,5 @@ class DecoderCBatchNorm2(nn.Module):
             net = block(net, c)
 
         out = self.conv_out(self.actvn(self.bn(net, c)))
-        out = out.squeeze(1)
         return out
 
