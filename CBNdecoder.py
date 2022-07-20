@@ -179,7 +179,8 @@ class DecoderCBatchNorm2(nn.Module):
 
     @autocast()
     def forward(self, p, c):
-        net = self.conv_p(p)
+        bn, cn = c.size()
+        net = self.conv_p(p).expand(bn, -1, -1)
 
         for block in self.blocks:
             net = block(net, c)

@@ -13,16 +13,16 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         num_gpu = 8
-        config = 'stage1_0.yml'
+        config = 'stage1_DL.yml'
     else:
         num_gpu = int(sys.argv[1])
         config = sys.argv[2]
     is_DDP = True
     debug = False
     phase = 'TRAIN'
-    resume = True
-    id = '07191109_stage1'
-    # id = None
+    resume = False
+    # id = '07191109_stage1'
+    id = None
     torch.multiprocessing.spawn(train, nprocs=num_gpu, args=(num_gpu, config, debug, phase, is_DDP, resume, id))
     # resume = True
     # torch.multiprocessing.spawn(train, nprocs=num_gpu, args=(num_gpu, config, debug, phase, is_DDP, resume, '06232156_stage2'))

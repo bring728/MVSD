@@ -2,11 +2,11 @@ mode: finetune
 
 nepoch: 10
 batchsize: 2
-num_workers: 10
+num_workers: 0
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
 
-stage1_path: 07171046_stage1
+stage1_path: 07191109_stage1
 
 normal:
   norm_layer: group
@@ -45,7 +45,8 @@ BRDF:
     norm_layer: group
 
 SVL:
-  dim: 128
+  vsg_dim: 128
+  c_dim: 128
   GL:
     lr: 1e-4
   decoder:

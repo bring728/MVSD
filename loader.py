@@ -120,9 +120,20 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
         curr_model = MultiViewModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
         if do_watch:
             watch_model = []
-            if cfg.mode == 'normal' or cfg.mode == 'finetune':
+            if cfg.mode == 'BRDF' or cfg.mode == 'finetune':
                 watch_model.append([curr_model.context_net, curr_model.aggregation_net, curr_model.brdf_refine_net])
-            if cfg.mode == 'DL' or cfg.mode == 'finetune':
-                watch_model.append([curr_model.GL_Net, curr_model.GL_decoder])
+            if cfg.mode == 'SVL' or cfg.mode == 'finetune':
+                helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
+                x, y, z = np.meshgrid(np.arange(cfg.SVL.vsg_dim), np.arange(cfg.SVL.vsg_dim), np.arange(cfg.SVL.vsg_dim), indexing='ij')
+                x = x.astype(dtype=np.float32) + 0.5  # add half pixel
+                x = 2.0 * x / cfg.SVL.vsg_dim - 1
+                y = y.astype(dtype=np.float32) + 0.5
+                y = 2.0 * y / cfg.SVL.vsg_dim - 1
+                z = z.astype(dtype=np.float32) + 0.5
+                z = 2.0 * z / cfg.SVL.vsg_dim - 1
+                voxel_grid = np.stack([x, y, z], axis=0)
+                voxel_grid = torch.from_numpy(voxel_grid).to(gpu, non_blocking=cfg.pinned)
+                helper_dict['voxels'] = voxel_grid
+                watch_model.append([curr_model.GL_Net])
             wandb_obj.watch(watch_model, log='all')
     return curr_model, helper_dict

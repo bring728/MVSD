@@ -4,17 +4,13 @@ nepoch: 80
 batchsize: 16
 num_workers: 6
 lrate_decay_steps: 10000
-lrate_decay_factor: 0.8
+lrate_decay_factor: 0.9
 
-normal:
-  lambda_mse: 1.0
-  lambda_ang: 1.0
-  lr: 1e-4
-  norm_layer: group
+normal_path: 07191109_stage1
 
 DL:
   lambda_vis_prior: 0.001
-  lr: 1e-3
+  lr: 1e-4
   scale_inv: True
   unified_decoder: False
   norm_layer: batch
@@ -31,7 +27,7 @@ pinned: True
 randomseed: 2245
 i_img: 100
 i_img_up: 1.2
-i_save: 4000
+i_save: 3000
 i_print: 10
 
 

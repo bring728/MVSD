@@ -152,8 +152,8 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 refine_input = torch.cat([rgbdcn, brdf_feature, featmaps_dense.squeeze(-2).permute(0, 3, 1, 2)], dim=1)
                 albedo, rough = curr_model.brdf_refine_net(refine_input)
 
-                curr_model.GL_Net(x_encoded)
-
+                global_feature_volume = curr_model.GL_Net(x_encoded)
+                curr_model.VSG_Net()
                 segBRDF = data['mask'][:, :1]
                 pred['rough'] = rough
                 pred['conf'] = torch.ones_like(rough)

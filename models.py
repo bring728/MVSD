@@ -207,7 +207,9 @@ class SingleViewModel(object):
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                          step_size=int(cfg.lrate_decay_steps),
                                                          gamma=float(cfg.lrate_decay_factor))
-        self.start_step = self.load_from_ckpt(experiment, load_opt=load_opt, load_scheduler=load_scheduler)
+        if cfg.normal_path is not None:
+            experiment = osp.join(osp.dirname(experiment), cfg.normal_path)
+            self.start_step = self.load_from_ckpt(experiment, load_opt=load_opt, load_scheduler=load_scheduler)
 
         if self.is_DDP:
             self.normal_net = torch.nn.parallel.DistributedDataParallel(self.normal_net, device_ids=[gpu], )
@@ -247,10 +249,12 @@ class SingleViewModel(object):
         else:
             to_load = torch.load(filename)
 
-        # if load_opt:
-        #     self.optimizer.load_state_dict(to_load['optimizer'])
-        # if load_scheduler:
-        #     self.scheduler.load_state_dict(to_load['scheduler'])
+        step = filename.split('_')[-1].split('.')[0]
+        if not (step == 'latest' or step == 'best'):
+            if load_opt:
+                self.optimizer.load_state_dict(to_load['optimizer'])
+            if load_scheduler:
+                self.scheduler.load_state_dict(to_load['scheduler'])
 
         self.normal_net.load_state_dict(to_load['normal_net'])
         print('normal loaded from ', filename)
@@ -377,7 +381,7 @@ class MultiViewModel(object):
             all_params.append({'params': self.aggregation_net.parameters(), 'lr': float(cfg.BRDF.aggregation.lr)})
             all_params.append({'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.BRDF.refine.lr)})
         if self.mode == 'SVL' or self.mode == 'finetune':
-            self.GL_Net = GlobalLightingNet(cfg.SVL).to(device)
+            self.GL_Net = GlobalLightingNet(cfg, gpu=gpu).to(device)
             all_params.append({'params': self.GL_Net.parameters(), 'lr': float(cfg.SVL.GL.lr)})
             # all_params.append({'params': self.GL_decoder.parameters(), 'lr': float(cfg.SVL.decoder.lr)})
 
@@ -439,10 +443,13 @@ class MultiViewModel(object):
             to_load = torch.load(filename, map_location={'cuda:0': 'cuda:%d' % self.gpu})
         else:
             to_load = torch.load(filename)
-        if load_opt:
-            self.optimizer.load_state_dict(to_load['optimizer'])
-        if load_scheduler:
-            self.scheduler.load_state_dict(to_load['scheduler'])
+
+        step = filename.split('_')[-1].split('.')[0]
+        if not (step == 'latest' or step == 'best'):
+            if load_opt:
+                self.optimizer.load_state_dict(to_load['optimizer'])
+            if load_scheduler:
+                self.scheduler.load_state_dict(to_load['scheduler'])
 
         self.context_net.load_state_dict(to_load['context_net'])
         self.aggregation_net.load_state_dict(to_load['aggregation_net'])

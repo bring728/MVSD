@@ -192,20 +192,32 @@ class Context_ResUNet(nn.Module):
 
 
 class GlobalLightingNet(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg, gpu, cube_res=32):
         super(GlobalLightingNet, self).__init__()
+        self.cube_res = cube_res
+        x, y, z = np.meshgrid(np.arange(cube_res), np.arange(cube_res), np.arange(cube_res), indexing='ij')
+        x = x.reshape(-1).astype(dtype=np.float32) + 0.5  # add half pixel
+        x = 2.0 * x / cube_res - 1
+        y = y.reshape(-1).astype(dtype=np.float32) + 0.5
+        y = 2.0 * y / cube_res - 1
+        z = z.reshape(-1).astype(dtype=np.float32) + 0.5
+        z = 2.0 * z / cube_res - 1
+        coords = np.stack([x, y, z], axis=0)
+        self.volume_coord = torch.from_numpy(coords).to(gpu, non_blocking=cfg.pinned).unsqueeze(0)
+        self.volume_coord.requires_grad = False
 
-        self.layer_d_1 = make_layer(in_ch=512, out_ch=512, kernel=4, stride=2, num_group=64, norm_layer='instance')
-        self.layer_d_2 = make_layer(in_ch=512, out_ch=512, kernel=4, stride=2, num_group=64, norm_layer='instance')
-        self.decoder = DecoderCBatchNorm2(cfg.dim)
+        self.layer_d_1 = make_layer(in_ch=512, out_ch=256, kernel=4, stride=2, num_group=64, norm_layer='instance')
+        self.layer_d_2 = make_layer(in_ch=256, out_ch=cfg.SVL.c_dim, kernel=4, stride=2, num_group=64, norm_layer='instance')
+        self.decoder = DecoderCBatchNorm2(c_dim=cfg.SVL.c_dim)
 
     @autocast()
     def forward(self, x):
+        bn = x.size(0)
         x1 = self.layer_d_1(x)
         x2 = self.layer_d_2(x1)
         global_lighting_feature = F.adaptive_avg_pool2d(x2, (1, 1))[..., 0, 0]
-        self.decoder(global_lighting_feature, p)
-        return
+        global_feature_volume = torch.reshape(self.decoder(self.volume_coord, global_lighting_feature), [bn, self.cube_res, self.cube_res, self.cube_res])
+        return global_feature_volume
 
 
 def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride=1, num_group=4, act='relu', norm_layer='group'):
