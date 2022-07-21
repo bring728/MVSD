@@ -131,7 +131,6 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             scalars_to_log['train/albedo_mse_err'] = albedo_mse_err_refined.item()
             scalars_to_log['train/rough_mse_err'] = rough_mse_err_refined.item()
             total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err_refined + cfg.BRDF.lambda_rough * rough_mse_err_refined
-            scalars_to_log['train/total_loss'] = total_loss.item()
 
             if cfg.mode == 'finetune':
                 if helper_dict['voxel_grid'].size(0) != bn:
@@ -144,12 +143,37 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 source = torch.cat([rgbdcn, albedo, rough, brdf_feature], dim=1)
                 visible_surface_volume = get_visible_surface_volume(voxel_grid, data['max_depth'], source, data['cam'][:, 0])
                 VSG = curr_model.VSG_Net(visible_surface_volume, global_feature_volume)
+                envmaps_SVL = envmap_from_VSG(VSG, data['cam'][:, 0], data['depth_est'][:, 0], data['normal'])
 
+            scalars_to_log['train/total_loss'] = total_loss.item()
 
         else:
             raise Exception('stage error')
 
     return total_loss, pred
+
+
+def get_visible_surface_volume(voxel_grid_norm, max_depth, source, intrinsic):
+    bn, c, h, w = source.shape
+    bn, c1, c2, c3, _ = voxel_grid_norm.shape
+    voxel_grid = voxel_grid_norm * max_depth
+
+    # get projection coord
+    pixel_coord = (intrinsic[:, None, None, None] @ voxel_grid[..., None])[..., 0]
+    if torch.min(pixel_coord[..., 2:3]) < 0:
+        raise Exception('projection error')
+    pixel_coord = pixel_coord[..., :2] / pixel_coord[..., 2:3]
+
+    resize_factor = torch.tensor([w, h]).to(pixel_coord.device)[None, None, None, None, :]
+    pixel_coord_norm = (2 * (pixel_coord / resize_factor) - 1.).reshape(bn, c1, c2 * c3, 2)
+    unprojected_volume = F.grid_sample(source, pixel_coord_norm, align_corners=True, mode='bilinear').reshape(bn, c, c1, c2, c3)
+    visible_surface_volume = torch.cat([unprojected_volume[:, :3], unprojected_volume[:, 5:]], dim=1)
+    volume_weight_k = torch.exp(unprojected_volume[:, 4, ...] * -torch.pow(unprojected_volume[:, 3, ...] - voxel_grid[..., -1], 2))
+    return visible_surface_volume * volume_weight_k.unsqueeze(1)
+
+
+def envmap_from_VSG(VSG, intrinsic, depth, normal):
+    VSG
 
 
 def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list):
@@ -208,74 +232,3 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list):
     #     cv2.imshow('asd', rgb)
     #     cv2.waitKey(0)
     return rgb_sampled, viewdir.permute(0, 2, 3, 1, 4), proj_err.permute(0, 2, 3, 1, 4)
-
-
-def get_visible_surface_volume(voxel_grid_norm, max_depth, source, intrinsic):
-    bn, c, h, w = source.shape
-    bn, c1, c2, c3, _ = voxel_grid_norm.shape
-    voxel_grid = voxel_grid_norm * max_depth
-
-    # get projection coord
-    pixel_coord = (intrinsic[:, None, None, None] @ voxel_grid[..., None])[..., 0]
-    if torch.min(pixel_coord[..., 2:3]) < 0:
-        raise Exception('projection error')
-    pixel_coord = pixel_coord[..., :2] / pixel_coord[..., 2:3]
-
-    resize_factor = torch.tensor([w, h]).to(pixel_coord.device)[None, None, None, None, :]
-    pixel_coord_norm = (2 * (pixel_coord / resize_factor) - 1.).reshape(bn, c1, c2 * c3, 2)
-    unprojected_volume = F.grid_sample(source, pixel_coord_norm, align_corners=True, mode='bilinear').reshape(bn, c, c1, c2, c3)
-    visible_surface_volume = torch.cat([unprojected_volume[:, :3], unprojected_volume[:, 5:]], dim=1)
-    volume_weight_k = torch.exp(unprojected_volume[:, 4, ...] * -torch.pow(unprojected_volume[:, 3, ...] - voxel_grid[..., -1], 2))
-    return visible_surface_volume * volume_weight_k.unsqueeze(1)
-
-
-def decompose_single_image(model, gpu, chunk_size, pixels, val_data):
-    ret = OrderedDict()
-    ret['albedo'] = []
-    ret['normal'] = []
-    ret['roughness'] = []
-
-    depth_list = val_data['depth_list'][0].cuda(gpu)
-    int_list = val_data['int_list'][0].cuda(gpu)
-    c2w_list = val_data['c2w_list'][0].cuda(gpu)
-    im_list = val_data['im_list'][0].cuda(gpu)
-    target_gt = val_data['target_gt'][0].cuda(gpu)
-    ch, h, w = target_gt.shape
-    depth_gt_flat = depth_list[0].reshape(-1)
-
-    featmaps = model.feature_net(im_list)
-    N_rays = pixels.shape[0]
-    for i in range(0, N_rays, chunk_size):
-        pixel_batch = pixels[i:i + chunk_size]
-        depth_gt = depth_gt_flat[i:i + chunk_size][:, None]
-
-        rgb_feat_viewdir_err = compute_projection(pixel_batch, depth_gt, int_list, c2w_list, depth_list, im_list, featmaps)
-        brdf = model.brdf_net(rgb_feat_viewdir_err)
-
-        albedo = 0.5 * (brdf[..., :3] + 1)
-
-        x_orig = brdf[..., 3:6]
-        norm = torch.sqrt(torch.sum(x_orig * x_orig, dim=1).unsqueeze(1)).expand_as(x_orig)
-        normal = x_orig / torch.clamp(norm, min=1e-6)
-
-        roughness = brdf[..., 6:]
-
-        ret['albedo'].append(albedo.cpu())
-        ret['normal'].append(normal.cpu())
-        ret['roughness'].append(roughness.cpu())
-
-    for k in ret:
-        tmp = torch.cat(ret[k], dim=0).reshape((h, w, -1))
-        ret[k] = tmp.permute(2, 0, 1)
-
-    albedo = ret['albedo']
-    segBRDF = target_gt[8:9].cpu()
-    albedo_gt = target_gt[:3].cpu()
-    ret['albedo'] = LSregress(albedo * segBRDF, albedo_gt * segBRDF, albedo)
-
-    ret['albedo_gt'] = albedo_gt
-    ret['normal_gt'] = target_gt[3:6].cpu()
-    ret['roughness_gt'] = target_gt[6:7].cpu()
-    ret['segBRDF'] = segBRDF
-    ret['segAll'] = target_gt[9:].cpu()
-    return ret
