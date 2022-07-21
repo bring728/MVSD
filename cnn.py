@@ -18,6 +18,9 @@ from torch.cuda.amp.autocast_mode import autocast
 from utils import *
 from CBNdecoder import DecoderCBatchNorm2
 
+cat_up = lambda x, y: F.interpolate(torch.cat([x, y], dim=1), scale_factor=2, mode='bilinear', align_corners=False)
+self_up = lambda x, y: F.interpolate(x, [y.size(2), y.size(3)], mode='bilinear', align_corners=False)
+
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
@@ -66,7 +69,6 @@ class BasicBlock(nn.Module):
 
         out += identity
         out = self.relu(out)
-
         return out
 
 
@@ -102,8 +104,12 @@ class Context_ResUNet(nn.Module):
         super(Context_ResUNet, self).__init__()
         filters = [64, 128, 256, 512]
         layers = [2, 2, 2, 2]
-        # norm_layer = nn.BatchNorm2d
-        norm_layer = nn.InstanceNorm2d
+        if cfg.norm_layer == 'instance':
+            norm_layer = nn.InstanceNorm2d
+        elif cfg.norm_layer == 'batch':
+            norm_layer = nn.BatchNorm2d
+        else:
+            raise Exception('context norm layer error')
         self._norm_layer = norm_layer
         self.dilation = 1
         block = BasicBlock
@@ -114,10 +120,10 @@ class Context_ResUNet(nn.Module):
         self.bn1 = norm_layer(self.inplanes, track_running_stats=False, affine=True)
         self.relu = nn.ReLU(inplace=True)
 
-        self.layer1 = self._make_layer(block, 64, layers[0], stride=1)
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.layer1 = self._make_layer(block, filters[0], layers[0], stride=1)
+        self.layer2 = self._make_layer(block, filters[1], layers[1], stride=2)
+        self.layer3 = self._make_layer(block, filters[2], layers[2], stride=2)
+        self.layer4 = self._make_layer(block, filters[3], layers[3], stride=2)
 
         # decoder
         self.upconv4 = upconv(filters[3], filters[2], 3, 2)
@@ -189,37 +195,6 @@ class Context_ResUNet(nn.Module):
 
         x_out = self.out_conv(x)
         return x_encoded, x_out
-
-
-class GlobalLightingNet(nn.Module):
-    def __init__(self, cfg, gpu, cube_res=32):
-        super(GlobalLightingNet, self).__init__()
-        self.cube_res = cube_res
-        self.out_dim = cfg.SVL.GL.global_volume_dim
-
-        x, y, z = np.meshgrid(np.arange(cube_res), np.arange(cube_res), np.arange(cube_res), indexing='xy')
-        x = x.reshape(-1).astype(dtype=np.float32) + 0.5  # add half pixel
-        x = 2.0 * x / cube_res - 1
-        y = y.reshape(-1).astype(dtype=np.float32) + 0.5
-        y = 2.0 * y / cube_res - 1
-        z = z.reshape(-1).astype(dtype=np.float32) + 0.5
-        z = 2.0 * z / cube_res - 1
-        coords = np.stack([x, y, z], axis=0)
-        self.volume_coord = torch.from_numpy(coords).to(gpu, non_blocking=cfg.pinned).unsqueeze(0)
-        self.volume_coord.requires_grad = False
-
-        self.layer_d_1 = make_layer(in_ch=512, out_ch=256, kernel=4, stride=2, num_group=64, norm_layer='instance')
-        self.layer_d_2 = make_layer(in_ch=256, out_ch=cfg.SVL.context_lighting_dim, kernel=4, stride=2, num_group=64, norm_layer='instance')
-        self.decoder = DecoderCBatchNorm2(c_dim=cfg.SVL.context_lighting_dim, out_dim=self.out_dim)
-
-    @autocast()
-    def forward(self, x):
-        bn = x.size(0)
-        x1 = self.layer_d_1(x)
-        x2 = self.layer_d_2(x1)
-        global_lighting_feature = F.adaptive_avg_pool2d(x2, (1, 1))[..., 0, 0]
-        global_feature_volume = self.decoder(self.volume_coord, global_lighting_feature).reshape([bn, self.out_dim, self.cube_res, self.cube_res, self.cube_res])
-        return global_feature_volume
 
 
 def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride=1, num_group=4, act='relu', norm_layer='group'):
@@ -319,12 +294,12 @@ class NormalNet(nn.Module):
         x6 = self.layer_d_6(x5)
 
         dx1 = self.layer_u_1(x6)
-        dx2 = self.layer_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx2 = F.interpolate(dx2, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
-        dx3 = self.layer_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx4 = self.layer_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx5 = self.layer_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx6 = self.layer_u_6(F.interpolate(torch.cat([dx5, x1], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = self.layer_u_2(cat_up(dx1, x5))
+        dx2 = self_up(dx2, x4)
+        dx3 = self.layer_u_3(cat_up(dx2, x4))
+        dx4 = self.layer_u_4(cat_up(dx3, x3))
+        dx5 = self.layer_u_5(cat_up(dx4, x2))
+        dx6 = self.layer_u_6(cat_up(dx5, x1))
         x_out = self.layer_final(dx6)
 
         x_out = torch.clamp(1.01 * torch.tanh(x_out), -1, 1)
@@ -386,27 +361,27 @@ class DirectLightingNet(nn.Module):
         intensity = torch.tanh(self.layer_intensity(x_color))
 
         dx1 = self.layer_axis_u_1(x_encoded)
-        dx2 = self.layer_axis_u_2(F.interpolate(torch.cat([dx1, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx2 = F.interpolate(dx2, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
-        dx3 = self.layer_axis_u_3(F.interpolate(torch.cat([dx2, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = F.interpolate(dx3, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
-        dx4 = self.layer_axis_u_4(F.interpolate(torch.cat([dx3, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = self.layer_axis_u_2(cat_up(dx1, x6))
+        dx2 = self_up(dx2, x5)
+        dx3 = self.layer_axis_u_3(cat_up(dx2, x5))
+        dx3 = self_up(dx3, x4)
+        dx4 = self.layer_axis_u_4(cat_up(dx3, x4))
         axis_out = torch.tanh(self.layer_axis_final(dx4))
 
         dx1 = self.layer_sharp_u_1(x_encoded)
-        dx2 = self.layer_sharp_u_2(F.interpolate(torch.cat([dx1, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx2 = F.interpolate(dx2, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
-        dx3 = self.layer_sharp_u_3(F.interpolate(torch.cat([dx2, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = F.interpolate(dx3, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
-        dx4 = self.layer_sharp_u_4(F.interpolate(torch.cat([dx3, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = self.layer_sharp_u_2(cat_up(dx1, x6))
+        dx2 = self_up(dx2, x5)
+        dx3 = self.layer_sharp_u_3(cat_up(dx2, x5))
+        dx3 = self_up(dx3, x4)
+        dx4 = self.layer_sharp_u_4(cat_up(dx3, x4))
         sharp_out = torch.tanh(self.layer_sharp_final(dx4))
 
         dx1 = self.layer_vis_u_1(x_encoded)
-        dx2 = self.layer_vis_u_2(F.interpolate(torch.cat([dx1, x6], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx2 = F.interpolate(dx2, [x5.size(2), x5.size(3)], mode='bilinear', align_corners=False)
-        dx3 = self.layer_vis_u_3(F.interpolate(torch.cat([dx2, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = F.interpolate(dx3, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
-        dx4 = self.layer_vis_u_4(F.interpolate(torch.cat([dx3, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = self.layer_vis_u_2(cat_up(dx1, x6))
+        dx2 = self_up(dx2, x5)
+        dx3 = self.layer_vis_u_3(cat_up(dx2, x5))
+        dx3 = self_up(dx3, x4)
+        dx4 = self.layer_vis_u_4(cat_up(dx3, x4))
         vis_out = torch.tanh(self.layer_vis_final(dx4))
 
         bn, _, row, col = vis_out.size()
@@ -435,7 +410,10 @@ class BRDFRefineNet(nn.Module):
         super(BRDFRefineNet, self).__init__()
         input_ch = cfg.BRDF.aggregation.final_hidden + 8 + cfg.BRDF.context_feature.dim
         norm_layer = cfg.BRDF.refine.norm_layer
-        self.refine_d_1 = make_layer(pad_type='rep', in_ch=input_ch, out_ch=128, kernel=4, stride=2, norm_layer='batch')
+
+        self.input_norm = nn.BatchNorm2d(input_ch)
+
+        self.refine_d_1 = make_layer(pad_type='rep', in_ch=input_ch, out_ch=128, kernel=4, stride=2, norm_layer=norm_layer)
         self.refine_d_2 = make_layer(in_ch=128, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=norm_layer)
         self.refine_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
         self.refine_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
@@ -460,6 +438,8 @@ class BRDFRefineNet(nn.Module):
 
     @autocast()
     def forward(self, x):
+        x = self.input_norm(x)
+
         x1 = self.refine_d_1(x)
         x2 = self.refine_d_2(x1)
         x3 = self.refine_d_3(x2)
@@ -468,26 +448,59 @@ class BRDFRefineNet(nn.Module):
         x6 = self.refine_d_6(x5)
 
         dx1 = self.refine_albedo_u_1(x6)
-        dx2 = self.refine_albedo_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx2 = F.interpolate(dx2, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
-        dx3 = self.refine_albedo_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx4 = self.refine_albedo_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx5 = self.refine_albedo_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx6 = self.refine_albedo_u_6(F.interpolate(torch.cat([dx5, x1], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = self.refine_albedo_u_2(cat_up(dx1, x5))
+        dx2 = self_up(dx2, x4)
+        dx3 = self.refine_albedo_u_3(cat_up(dx2, x4))
+        dx4 = self.refine_albedo_u_4(cat_up(dx3, x3))
+        dx5 = self.refine_albedo_u_5(cat_up(dx4, x2))
+        dx6 = self.refine_albedo_u_6(cat_up(dx5, x1))
         albedo = self.refine_albedo_final(dx6)
         albedo = 0.5 * (torch.clamp(1.01 * torch.tanh(albedo), -1, 1) + 1)
 
         dx1 = self.refine_rough_u_1(x6)
-        dx2 = self.refine_rough_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx2 = F.interpolate(dx2, [x4.size(2), x4.size(3)], mode='bilinear', align_corners=False)
-        dx3 = self.refine_rough_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx4 = self.refine_rough_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx5 = self.refine_rough_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx6 = self.refine_rough_u_6(F.interpolate(torch.cat([dx5, x1], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = self.refine_rough_u_2(cat_up(dx1, x5))
+        dx2 = self_up(dx2, x4)
+        dx3 = self.refine_rough_u_3(cat_up(dx2, x4))
+        dx4 = self.refine_rough_u_4(cat_up(dx3, x3))
+        dx5 = self.refine_rough_u_5(cat_up(dx4, x2))
+        dx6 = self.refine_rough_u_6(cat_up(dx5, x1))
         rough = self.refine_rough_final(dx6)
         rough = 0.5 * (torch.clamp(1.01 * torch.tanh(rough), -1, 1) + 1)
         rough = torch.mean(rough, dim=1, keepdim=True)
         return albedo, rough
+
+
+class GlobalLightingNet(nn.Module):
+    def __init__(self, cfg, gpu, cube_res=32):
+        super(GlobalLightingNet, self).__init__()
+        self.cube_res = cube_res
+        self.out_dim = cfg.SVL.GL.global_volume_dim
+
+        x, y, z = np.meshgrid(np.arange(cube_res), np.arange(cube_res), np.arange(cube_res), indexing='xy')
+        x = x.reshape(-1).astype(dtype=np.float32) + 0.5  # add half pixel
+        x = 2.0 * x / cube_res - 1
+        y = y.reshape(-1).astype(dtype=np.float32) + 0.5
+        y = 2.0 * y / cube_res - 1
+        z = z.reshape(-1).astype(dtype=np.float32) + 0.5
+        z = 2.0 * z / cube_res - 1
+        coords = np.stack([x, y, z], axis=0)
+        self.volume_coord = torch.from_numpy(coords).to(gpu, non_blocking=cfg.pinned).unsqueeze(0)
+        self.volume_coord.requires_grad = False
+
+        norm_layer = cfg.BRDF.context_feature.norm_layer
+        self.layer_d_1 = make_layer(in_ch=512, out_ch=256, kernel=4, stride=2, num_group=64, norm_layer=norm_layer)
+        self.layer_d_2 = make_layer(in_ch=256, out_ch=cfg.SVL.context_lighting_dim, kernel=4, stride=2, num_group=64, norm_layer=norm_layer)
+        self.decoder = DecoderCBatchNorm2(c_dim=cfg.SVL.context_lighting_dim, out_dim=self.out_dim)
+
+    @autocast()
+    def forward(self, x):
+        bn = x.size(0)
+        x1 = self.layer_d_1(x)
+        x2 = self.layer_d_2(x1)
+        global_lighting_feature = F.adaptive_avg_pool2d(x2, (1, 1))[..., 0, 0]
+        global_feature_volume = self.decoder(self.volume_coord, global_lighting_feature).reshape(
+            [bn, self.out_dim, self.cube_res, self.cube_res, self.cube_res])
+        return global_feature_volume
 
 
 class VSGNet(nn.Module):
@@ -497,8 +510,8 @@ class VSGNet(nn.Module):
         if cfg.BRDF.refine.context_concat:
             input_ch += cfg.BRDF.context_feature.dim
         norm_layer = cfg.BRDF.refine.norm_layer
-        self.refine_d_1 = make_layer3D(pad_type='rep', in_ch=input_ch, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer='batch')
 
+        self.refine_d_1 = make_layer3D(pad_type='rep', in_ch=input_ch, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer='batch')
         self.refine_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=norm_layer)
         self.refine_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
         self.refine_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
@@ -531,20 +544,20 @@ class VSGNet(nn.Module):
         x6 = self.refine_d_6(x5)
 
         dx1 = self.refine_albedo_u_1(x6)
-        dx2 = self.refine_albedo_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = self.refine_albedo_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx4 = self.refine_albedo_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx5 = self.refine_albedo_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx6 = self.refine_albedo_u_6(F.interpolate(torch.cat([dx5, x1], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = self.refine_albedo_u_2(cat_up(dx1, x5))
+        dx3 = self.refine_albedo_u_3(cat_up(dx2, x4))
+        dx4 = self.refine_albedo_u_4(cat_up(dx3, x3))
+        dx5 = self.refine_albedo_u_5(cat_up(dx4, x2))
+        dx6 = self.refine_albedo_u_6(cat_up(dx5, x1))
         albedo = self.refine_albedo_final(dx6)
         albedo = 0.5 * (torch.clamp(1.01 * torch.tanh(albedo), -1, 1) + 1)
 
         dx1 = self.refine_rough_u_1(x6)
-        dx2 = self.refine_rough_u_2(F.interpolate(torch.cat([dx1, x5], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx3 = self.refine_rough_u_3(F.interpolate(torch.cat([dx2, x4], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx4 = self.refine_rough_u_4(F.interpolate(torch.cat([dx3, x3], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx5 = self.refine_rough_u_5(F.interpolate(torch.cat([dx4, x2], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
-        dx6 = self.refine_rough_u_6(F.interpolate(torch.cat([dx5, x1], dim=1), scale_factor=2, mode='bilinear', align_corners=False))
+        dx2 = self.refine_rough_u_2(cat_up(dx1, x5))
+        dx3 = self.refine_rough_u_3(cat_up(dx2, x4))
+        dx4 = self.refine_rough_u_4(cat_up(dx3, x3))
+        dx5 = self.refine_rough_u_5(cat_up(dx4, x2))
+        dx6 = self.refine_rough_u_6(cat_up(dx5, x1))
         rough = self.refine_rough_final(dx6)
         rough = 0.5 * (torch.clamp(1.01 * torch.tanh(rough), -1, 1) + 1)
         return albedo, rough

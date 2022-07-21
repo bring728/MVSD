@@ -61,12 +61,12 @@ def record_images(stage, cfg, wandb_obj, data, pred, step, val=False):
         size_tmp = data['normal'][0].size()
         # depth = data['depth'][0, 0] / torch.quantile(data['depth'][0], 0.9)
         # depth = torch.clamp(depth, 0, 1)
-        depth = data['depth_norm'][0, 0]
+        depth = data['depth_norm'][0]
 
         imgs = [data['rgb'][0, 0] ** (1.0 / 2.2), (0.5 * (data['normal'][0] + 1)), depth.expand(size_tmp),
-                data['conf'][0, 0].expand(size_tmp)]
+                data['conf'][0].expand(size_tmp)]
         env = env_vis(data['envmaps'][0], cfg.DL.env_height, cfg.DL.env_width, cfg.DL.env_rows, cfg.DL.env_cols)
-        imgs.append(F.interpolate(env[None], size=[480, 640])[0])
+        imgs.append(F.interpolate(env[None], size=[240, 320])[0])
 
         num_img = len(imgs)
         c, h, w = imgs[0].shape

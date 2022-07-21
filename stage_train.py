@@ -9,7 +9,8 @@ from loader import load_id_wandb, load_dataloader, load_model
 import os
 
 # root = '/new_disk2/happily/Data'
-root = '/media/vig-titan-103/mybookduo'
+# root = '/media/vig-titan-103/mybookduo'
+root = '/home/happily/Data'
 
 def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume=False, run_id=None):
     if is_DDP:
@@ -37,7 +38,7 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
     scalars_to_log = {}
     max_iterations = len(train_loader) * cfg.nepoch
     start_time = time.time()
-    epoch = 0
+    epoch = global_step // len(train_loader)
 
     i_img = cfg.i_img
     while global_step < max_iterations:
@@ -54,10 +55,10 @@ def train(gpu, num_gpu, config, debug=False, phase='TRAIN', is_DDP=False, resume
             scaler.step(curr_model.optimizer)
             scaler.update()
             curr_model.scheduler.step()
-            scalars_to_log['lr'] = curr_model.scheduler.get_last_lr()[0]
 
             if record_flag:
                 if global_step % cfg.i_print == 0:
+                    scalars_to_log['lr'] = curr_model.scheduler.get_last_lr()[0]
                     wandb_obj.log(scalars_to_log, step=global_step)
                     print_state(exp_name, start_time, max_iterations, global_step, gpu)
                 if save_image_flag:

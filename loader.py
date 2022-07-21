@@ -63,7 +63,6 @@ def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag):
     if stage == '1':
         train_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TRAIN')
         val_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TEST')
-        # batch_per_gpu = int(cfg.batchsize / num_gpu)
     else:
         train_dataset = Openrooms_FF(dataRoot, cfg, stage, 'TRAIN', debug)
         val_dataset = Openrooms_FF(dataRoot, cfg, stage, 'TEST', debug)
@@ -133,8 +132,8 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
         if do_watch:
             watch_model = []
             if cfg.mode == 'BRDF' or cfg.mode == 'finetune':
-                watch_model.append([curr_model.context_net, curr_model.aggregation_net, curr_model.brdf_refine_net])
+                watch_model += [curr_model.context_net, curr_model.aggregation_net, curr_model.brdf_refine_net]
             if cfg.mode == 'SVL' or cfg.mode == 'finetune':
-                watch_model.append([curr_model.GL_Net])
+                watch_model += [curr_model.GL_Net, curr_model.VSG_Net]
             wandb_obj.watch(watch_model, log='all')
     return curr_model, helper_dict
