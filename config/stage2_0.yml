@@ -1,8 +1,8 @@
-mode: BRDF
+mode: finetune
 
 nepoch: 15
-batchsize: 6
-num_workers: 5
+batchsize: 1
+num_workers: 0
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
 

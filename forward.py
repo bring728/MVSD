@@ -145,6 +145,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 visible_surface_volume = get_visible_surface_volume(voxel_grid, data['max_depth'], source, data['cam'][:, 0])
                 VSG = curr_model.VSG_Net(visible_surface_volume, global_feature_volume)
 
+
         else:
             raise Exception('stage error')
 

@@ -503,66 +503,6 @@ class GlobalLightingNet(nn.Module):
         return global_feature_volume
 
 
-class VSGNet(nn.Module):
-    def __init__(self, cfg):
-        super(VSGNet, self).__init__()
-        input_ch = cfg.BRDF.aggregation.final_hidden + 5
-        if cfg.BRDF.refine.context_concat:
-            input_ch += cfg.BRDF.context_feature.dim
-        norm_layer = cfg.BRDF.refine.norm_layer
-
-        self.refine_d_1 = make_layer3D(pad_type='rep', in_ch=input_ch, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer='batch')
-        self.refine_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=norm_layer)
-        self.refine_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
-        self.refine_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=norm_layer)
-        self.refine_d_5 = make_layer(in_ch=256, out_ch=512, kernel=4, stride=2, num_group=32, norm_layer=norm_layer)
-        self.refine_d_6 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
-
-        self.refine_albedo_u_1 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
-        self.refine_albedo_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
-        self.refine_albedo_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
-        self.refine_albedo_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=norm_layer)
-        self.refine_albedo_u_5 = make_layer(in_ch=256, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_albedo_u_6 = make_layer(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_albedo_final = make_layer(pad_type='rep', in_ch=64, out_ch=3, kernel=3, stride=1, act='None', norm_layer='None')
-
-        self.refine_rough_u_1 = make_layer(in_ch=512, out_ch=512, kernel=3, stride=1, num_group=32, norm_layer=norm_layer)
-        self.refine_rough_u_2 = make_layer(in_ch=1024, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
-        self.refine_rough_u_3 = make_layer(in_ch=512, out_ch=256, kernel=3, stride=1, num_group=16, norm_layer=norm_layer)
-        self.refine_rough_u_4 = make_layer(in_ch=512, out_ch=128, kernel=3, stride=1, num_group=8, norm_layer=norm_layer)
-        self.refine_rough_u_5 = make_layer(in_ch=256, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_rough_u_6 = make_layer(in_ch=128, out_ch=64, kernel=3, stride=1, num_group=4, norm_layer=norm_layer)
-        self.refine_rough_final = make_layer(pad_type='rep', in_ch=64, out_ch=1, kernel=3, stride=1, act='None', norm_layer='None')
-
-    @autocast()
-    def forward(self, x):
-        x1 = self.refine_d_1(x)
-        x2 = self.refine_d_2(x1)
-        x3 = self.refine_d_3(x2)
-        x4 = self.refine_d_4(x3)
-        x5 = self.refine_d_5(x4)
-        x6 = self.refine_d_6(x5)
-
-        dx1 = self.refine_albedo_u_1(x6)
-        dx2 = self.refine_albedo_u_2(cat_up(dx1, x5))
-        dx3 = self.refine_albedo_u_3(cat_up(dx2, x4))
-        dx4 = self.refine_albedo_u_4(cat_up(dx3, x3))
-        dx5 = self.refine_albedo_u_5(cat_up(dx4, x2))
-        dx6 = self.refine_albedo_u_6(cat_up(dx5, x1))
-        albedo = self.refine_albedo_final(dx6)
-        albedo = 0.5 * (torch.clamp(1.01 * torch.tanh(albedo), -1, 1) + 1)
-
-        dx1 = self.refine_rough_u_1(x6)
-        dx2 = self.refine_rough_u_2(cat_up(dx1, x5))
-        dx3 = self.refine_rough_u_3(cat_up(dx2, x4))
-        dx4 = self.refine_rough_u_4(cat_up(dx3, x3))
-        dx5 = self.refine_rough_u_5(cat_up(dx4, x2))
-        dx6 = self.refine_rough_u_6(cat_up(dx5, x1))
-        rough = self.refine_rough_final(dx6)
-        rough = 0.5 * (torch.clamp(1.01 * torch.tanh(rough), -1, 1) + 1)
-        return albedo, rough
-
-
 import math
 
 # kernel, stride, padding

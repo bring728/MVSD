@@ -1,8 +1,6 @@
 import os
 import cv2
-
-import numpy as np
-
+from unet_3d import UNet_3D
 from mlp import *
 from cnn import *
 import os.path as osp
@@ -212,7 +210,7 @@ class MultiViewModel(object):
             all_params.append({'params': self.brdf_refine_net.parameters(), 'lr': float(cfg.BRDF.refine.lr)})
         if self.mode == 'SVL' or self.mode == 'finetune':
             self.GL_Net = GlobalLightingNet(cfg, gpu=gpu).to(device)
-            self.VSG_Net = VSGNet(cfg).to(device)
+            self.VSG_Net = UNet_3D(cfg).to(device)
             all_params.append({'params': self.GL_Net.parameters(), 'lr': float(cfg.SVL.GL.lr)})
             all_params.append({'params': self.VSG_Net.parameters(), 'lr': float(cfg.SVL.vsgnet.lr)})
 
