@@ -110,7 +110,7 @@ class Openrooms_FF(Dataset):
         # recenter to cam_0
         w2target = np.linalg.inv(src_c2w_list[0])
         batchDict['c2w'] = (w2target @ np.stack(src_c2w_list, 0)).astype(np.float32)
-        batchDict['max_depth'] = max_depth.reshape(1, 1, 1, 1)
+        # batchDict['max_depth'] = max_depth.reshape(1, 1, 1, 1)
 
         # scene scale changes during training time
         # normal_est = loadH5(name_list[0].format('normalest', 'h5'))
@@ -129,7 +129,7 @@ class Openrooms_FF(Dataset):
             # envmaps = loadEnvmap(name_list[0].replace('_320', '_env').format('imenv', 'hdr'), self.cfg.SVL.env_height,
             #                      self.cfg.SVL.env_width, self.cfg.SVL.env_rows, self.cfg.SVL.env_cols)
             envmaps = envmaps * scene_scale
-            batchDict['envmaps_gt'] = envmaps.astype(np.float32)
+            batchDict['envmaps_SVL_gt'] = envmaps.astype(np.float32)
         return batchDict
 
 
@@ -208,18 +208,18 @@ class Openrooms_FF_single(Dataset):
         #     batchDict['normal_gt'] = normal
         #
         # elif self.stage == '1-2':
-        #     envmaps = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
+        #     envmaps_DL = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
         #                                      self.cfg.DL.env_rows, self.cfg.DL.env_cols)
-        #     envmaps = envmaps * scene_scale
-        #     batchDict['envmaps_gt'] = envmaps.astype(np.float32)
+        #     envmaps_DL = envmaps_DL * scene_scale
+        #     batchDict['envmaps_DL_gt'] = envmaps_DL.astype(np.float32)
         normal = loadImage(name.format('imnormal', 'png'), normalize_01=False)
         normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0, keepdims=True), 1e-5))).astype(np.float32)
         batchDict['normal_gt'] = normal
         if self.mode == 'DL' or self.mode == 'finetune':
-            envmaps = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
+            envmaps_DL = loadEnvmap(name.format('imenvDirect', 'hdr'), self.cfg.DL.env_height, self.cfg.DL.env_width,
                                  self.cfg.DL.env_rows, self.cfg.DL.env_cols)
-            envmaps = envmaps * scene_scale
-            batchDict['envmaps_gt'] = envmaps.astype(np.float32)
+            envmaps_DL = envmaps_DL * scene_scale
+            batchDict['envmaps_DL_gt'] = envmaps_DL.astype(np.float32)
         return batchDict
 
 # class Openrooms_LMDB_single(Dataset):

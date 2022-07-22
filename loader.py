@@ -125,9 +125,26 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
             y = 2.0 * y / cfg.SVL.vsg_res - 1
             z = z.astype(dtype=np.float32) + 0.5
             z = 2.0 * z / cfg.SVL.vsg_res - 1
-            voxel_grid = np.stack([x, y, z], axis=-1)[:, :, cfg.SVL.vsg_res // 2:, :]
-            voxel_grid = torch.from_numpy(voxel_grid).to(gpu, non_blocking=cfg.pinned)[None].expand([cfg.batchsize, -1, -1, -1, -1])
-            helper_dict['voxel_grid'] = voxel_grid
+            voxel_grid_full = np.stack([x, y, z], axis=-1)
+
+            voxel_grid_front = torch.from_numpy(voxel_grid_full[:, :, cfg.SVL.vsg_res // 2:, :])
+            voxel_grid_front = voxel_grid_front.to(gpu, non_blocking=cfg.pinned)[None].expand([cfg.batchsize, -1, -1, -1, -1])
+            helper_dict['voxel_grid_front'] = voxel_grid_front
+            voxel_grid_back = torch.from_numpy(voxel_grid_full[:, :, :cfg.SVL.vsg_res // 2, :])
+            voxel_grid_back = voxel_grid_back.to(gpu, non_blocking=cfg.pinned)[None].expand([cfg.batchsize, -1, -1, -1, -1])
+            helper_dict['voxel_grid_back'] = voxel_grid_back
+
+            Az = ((np.arange(cfg.SVL.env_width) + 0.5) / cfg.SVL.env_width - 0.5) * 2 * np.pi
+            El = ((np.arange(cfg.SVL.env_height) + 0.5) / cfg.SVL.env_height) * np.pi / 2.0
+            r = np.arange(cfg.SVL.vsg_res) / cfg.SVL.vsg_res * 2 * (3**(1/2))
+            Az, El, r = np.meshgrid(Az, El, r, indexing='xy')
+            Az = Az.reshape(-1, 1)
+            El = El.reshape(-1, 1)
+            r = r.reshape(-1, 1)
+            lx = r * np.sin(El) * np.cos(Az)
+            ly = r * np.sin(El) * np.sin(Az)
+            lz = r * np.cos(El)
+            ls = np.concatenate((lx, ly, lz), axis=1)
 
         if do_watch:
             watch_model = []

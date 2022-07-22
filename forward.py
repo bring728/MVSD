@@ -37,19 +37,19 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 rgbdcn = torch.cat([data['input'], 0.5 * (pred['normal'] + 1)], dim=1)
                 axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
                 sharpness_hdr, intensity_hdr = helper_dict['sg2env'].SG_ldr2hdr(sharpness, intensity)
-                envmaps_pred = helper_dict['sg2env'].fromSGtoIm(axis, sharpness_hdr, intensity_hdr)
-                pred['envmaps'] = envmaps_pred
+                envmaps_DL_pred = helper_dict['sg2env'].fromSGtoIm(axis, sharpness_hdr, intensity_hdr)
+                pred['envmaps_DL'] = envmaps_DL_pred
 
                 segBRDF = F.adaptive_avg_pool2d(data['mask'][:, :1, ...], (cfg.DL.env_rows, cfg.DL.env_cols))
-                # notDarkEnv = (torch.mean(data['envmaps_gt'], dim=(1, 4, 5)) > 0.001).float()[:, None]
-                # segEnvBatch = (segBRDF * notDarkEnv)[..., None, None].expand_as(data['envmaps_gt'])
-                segEnvBatch = segBRDF[..., None, None].expand_as(data['envmaps_gt'])
+                # notDarkEnv = (torch.mean(data['envmaps_DL_gt'], dim=(1, 4, 5)) > 0.001).float()[:, None]
+                # segEnvBatch = (segBRDF * notDarkEnv)[..., None, None].expand_as(data['envmaps_DL_gt'])
+                segEnvBatch = segBRDF[..., None, None].expand_as(data['envmaps_DL_gt'])
                 if cfg.DL.scale_inv:
-                    envmaps_pred_scaled = LSregress(envmaps_pred.detach() * segEnvBatch, data['envmaps_gt'] * segEnvBatch, envmaps_pred)
-                    env_loss = img2log_mse(envmaps_pred_scaled, data['envmaps_gt'], segEnvBatch)
+                    envmaps_DL_pred_scaled = LSregress(envmaps_DL_pred.detach() * segEnvBatch, data['envmaps_DL_gt'] * segEnvBatch, envmaps_DL_pred)
+                    env_loss = img2log_mse(envmaps_DL_pred_scaled, data['envmaps_DL_gt'], segEnvBatch)
                     scalars_to_log['train/env_scaled_loss'] = env_loss.item()
                 else:
-                    env_loss = img2log_mse(envmaps_pred, data['envmaps_gt'], segEnvBatch)
+                    env_loss = img2log_mse(envmaps_DL_pred, data['envmaps_DL_gt'], segEnvBatch)
                     scalars_to_log['train/env_msle_loss'] = env_loss.item()
 
                 vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
@@ -67,17 +67,17 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 rgbdcn = torch.cat([data['input'], 0.5 * (pred['normal'] + 1)], dim=1)
                 axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
                 sharpness_hdr, intensity_hdr = helper_dict['sg2env'].SG_ldr2hdr(sharpness, intensity)
-                envmaps_pred = helper_dict['sg2env'].fromSGtoIm(axis, sharpness_hdr, intensity_hdr)
-                pred['envmaps'] = envmaps_pred
+                envmaps_DL_pred = helper_dict['sg2env'].fromSGtoIm(axis, sharpness_hdr, intensity_hdr)
+                pred['envmaps_DL'] = envmaps_DL_pred
 
                 segBRDF = F.adaptive_avg_pool2d(data['mask'][:, :1, ...], (cfg.DL.env_rows, cfg.DL.env_cols))
-                segEnvBatch = segBRDF[..., None, None].expand_as(data['envmaps_gt'])
+                segEnvBatch = segBRDF[..., None, None].expand_as(data['envmaps_DL_gt'])
                 if cfg.DL.scale_inv:
-                    envmaps_pred_scaled = LSregress(envmaps_pred.detach() * segEnvBatch, data['envmaps_gt'] * segEnvBatch, envmaps_pred)
-                    env_loss = img2log_mse(envmaps_pred_scaled, data['envmaps_gt'], segEnvBatch)
+                    envmaps_DL_pred_scaled = LSregress(envmaps_DL_pred.detach() * segEnvBatch, data['envmaps_DL_gt'] * segEnvBatch, envmaps_DL_pred)
+                    env_loss = img2log_mse(envmaps_DL_pred_scaled, data['envmaps_DL_gt'], segEnvBatch)
                     scalars_to_log['train/env_scaled_loss'] = env_loss.item()
                 else:
-                    env_loss = img2log_mse(envmaps_pred, data['envmaps_gt'], segEnvBatch)
+                    env_loss = img2log_mse(envmaps_DL_pred, data['envmaps_DL_gt'], segEnvBatch)
                     scalars_to_log['train/env_msle_loss'] = env_loss.item()
                 vis_beta_loss = torch.mean(torch.log(0.1 + vis) + torch.log(0.1 + 1. - vis) + 2.20727)  # from neural volumes
                 scalars_to_log['train/vis_beta_loss'] = vis_beta_loss.item()
@@ -97,7 +97,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
 
             if save_image_flag:
                 DL = data['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
-                data['envmaps'] = helper_dict['sg2env'].fromSGtoIm(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:])
+                data['envmaps_DL'] = helper_dict['sg2env'].fromSGtoIm(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:])
 
             pixels = helper_dict['pixels']
             if helper_dict['pixels_norm'].size(0) != bn:
@@ -133,17 +133,20 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             total_loss = cfg.BRDF.lambda_albedo * albedo_mse_err_refined + cfg.BRDF.lambda_rough * rough_mse_err_refined
 
             if cfg.mode == 'finetune':
-                if helper_dict['voxel_grid'].size(0) != bn:
-                    voxel_grid = helper_dict['voxel_grid'][:bn]
+                if helper_dict['voxel_grid_front'].size(0) != bn:
+                    voxel_grid_front = helper_dict['voxel_grid_front'][:bn]
+                    voxel_grid = torch.cat([helper_dict['voxel_grid_back'][:bn], voxel_grid_front], dim=-2)
                 else:
-                    voxel_grid = helper_dict['voxel_grid']
+                    voxel_grid_front = helper_dict['voxel_grid_front']
+                    voxel_grid = torch.cat([helper_dict['voxel_grid_back'], voxel_grid_front], dim=-2)
+
                 global_feature_volume = curr_model.GL_Net(x_encoded)
 
-                rgbdcn[:, 3:4] = data['depth_est'][:, 0]
                 source = torch.cat([rgbdcn, albedo, rough, brdf_feature], dim=1)
-                visible_surface_volume = get_visible_surface_volume(voxel_grid, data['max_depth'], source, data['cam'][:, 0])
+                visible_surface_volume = get_visible_surface_volume(voxel_grid_front, source, data['cam'][:, 0])
                 VSG = curr_model.VSG_Net(visible_surface_volume, global_feature_volume)
-                envmaps_SVL = envmap_from_VSG(VSG, data['cam'][:, 0], data['depth_est'][:, 0], data['normal'])
+
+                envmaps_SVL = envmap_from_VSG(VSG, voxel_grid, pixels, data['cam'][:, 0], data['depth_norm'], data['normal'])
 
             scalars_to_log['train/total_loss'] = total_loss.item()
 
@@ -153,10 +156,9 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
     return total_loss, pred
 
 
-def get_visible_surface_volume(voxel_grid_norm, max_depth, source, intrinsic):
+def get_visible_surface_volume(voxel_grid, source, intrinsic):
     bn, c, h, w = source.shape
-    bn, c1, c2, c3, _ = voxel_grid_norm.shape
-    voxel_grid = voxel_grid_norm * max_depth
+    bn, c1, c2, c3, _ = voxel_grid.shape
 
     # get projection coord
     pixel_coord = (intrinsic[:, None, None, None] @ voxel_grid[..., None])[..., 0]
@@ -172,7 +174,13 @@ def get_visible_surface_volume(voxel_grid_norm, max_depth, source, intrinsic):
     return visible_surface_volume * volume_weight_k.unsqueeze(1)
 
 
-def envmap_from_VSG(VSG, intrinsic, depth, normal):
+def envmap_from_VSG(VSG, voxel_grid, pixel_batch, intrinsic, depth, normal):
+    pixel_batch = pixel_batch[:, ::2, ::2]
+    cam_coord = (torch.inverse(intrinsic[:, None, None]) @ pixel_batch)
+    min_r = 0
+    max_r = 2 * 3**(1/2)
+
+
     VSG
 
 

@@ -440,9 +440,9 @@ class renderingLayer():
         Az = Az.reshape(-1, 1)
         El = El.reshape(-1, 1)
         lx = np.sin(El) * np.cos(Az)
-
         ly = np.sin(El) * np.sin(Az)
         lz = np.cos(El)
+
         ls = np.concatenate((lx, ly, lz), axis=1)
 
         envWeight = np.sin(El) * np.pi * np.pi / envWidth / envHeight
