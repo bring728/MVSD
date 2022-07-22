@@ -134,9 +134,10 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
             voxel_grid_back = voxel_grid_back.to(gpu, non_blocking=cfg.pinned)[None].expand([cfg.batchsize, -1, -1, -1, -1])
             helper_dict['voxel_grid_back'] = voxel_grid_back
 
-            Az = ((np.arange(cfg.SVL.env_width) + 0.5) / cfg.SVL.env_width - 0.5) * 2 * np.pi
-            El = ((np.arange(cfg.SVL.env_height) + 0.5) / cfg.SVL.env_height) * np.pi / 2.0
-            r = np.arange(cfg.SVL.vsg_res) / cfg.SVL.vsg_res * 2 * (3**(1/2))
+            #azimuth, elevation
+            Az = ((np.arange(cfg.SVL.env_width) + 0.5) / cfg.SVL.env_width - 0.5) * 2 * np.pi  # -pi ~ pi
+            El = ((np.arange(cfg.SVL.env_height) + 0.5) / cfg.SVL.env_height) * np.pi / 2.0  # 0 ~ pi/2
+            r = np.arange(cfg.SVL.vsg_res) / cfg.SVL.vsg_res * 2 * (3 ** (1 / 2))
             Az, El, r = np.meshgrid(Az, El, r, indexing='xy')
             Az = Az.reshape(-1, 1)
             El = El.reshape(-1, 1)
@@ -144,8 +145,11 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
             lx = r * np.sin(El) * np.cos(Az)
             ly = r * np.sin(El) * np.sin(Az)
             lz = r * np.cos(El)
-            ls = np.concatenate((lx, ly, lz), axis=1)
-
+            ls = torch.from_numpy(np.concatenate((lx, ly, lz), axis=1).astype(np.float32))
+            ls = ls.to(gpu, non_blocking=cfg.pinned)
+            helper_dict['ls'] = ls
+            down = torch.from_numpy(np.array([0, 1.0, 0], dtype=np.float32)).to(gpu, non_blocking=cfg.pinned)
+            helper_dict['down'] = down
         if do_watch:
             watch_model = []
             if cfg.mode == 'BRDF' or cfg.mode == 'finetune':

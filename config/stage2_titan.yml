@@ -12,7 +12,6 @@ normal:
   norm_layer: group
 
 DL:
-  unified_decoder: False
   norm_layer: batch
   SGNum: 4
   env_height: 8
@@ -38,6 +37,7 @@ BRDF:
     head_dim: 16
     mlp_hidden: 16
     final_hidden: 32
+    brdf_feature_dim: 16
     lr: 1e-4
 
   refine:
@@ -61,7 +61,6 @@ SVL:
 imWidth: 320
 imHeight: 240
 num_view_all: 9
-num_view_min: 6
 autocast: True
 pinned: True
 randomseed: 3127

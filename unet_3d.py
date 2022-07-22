@@ -206,7 +206,7 @@ class UNet_3D(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.dim_global = cfg.SVL.GL.global_volume_dim
-        self.filters = [10 + cfg.BRDF.aggregation.final_hidden, 64, 128, 512, 512, 1024]
+        self.filters = [10 + cfg.BRDF.aggregation.brdf_feature_dim, 64, 128, 512, 512, 1024]
         self.n_blocks = 5
         self.out_ch = 8
         self.activation = 'relu'

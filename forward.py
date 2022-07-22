@@ -140,13 +140,15 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                     voxel_grid_front = helper_dict['voxel_grid_front']
                     voxel_grid = torch.cat([helper_dict['voxel_grid_back'], voxel_grid_front], dim=-2)
 
+                ls = helper_dict['ls']
+                down = helper_dict['down']
                 global_feature_volume = curr_model.GL_Net(x_encoded)
 
                 source = torch.cat([rgbdcn, albedo, rough, brdf_feature], dim=1)
                 visible_surface_volume = get_visible_surface_volume(voxel_grid_front, source, data['cam'][:, 0])
                 VSG = curr_model.VSG_Net(visible_surface_volume, global_feature_volume)
 
-                envmaps_SVL = envmap_from_VSG(VSG, voxel_grid, pixels, data['cam'][:, 0], data['depth_norm'], data['normal'])
+                envmaps_SVL = envmap_from_VSG(VSG, voxel_grid, ls, down, pixels, data['cam'][:, 0], data['depth_norm'], data['normal'])
 
             scalars_to_log['train/total_loss'] = total_loss.item()
 
@@ -174,12 +176,18 @@ def get_visible_surface_volume(voxel_grid, source, intrinsic):
     return visible_surface_volume * volume_weight_k.unsqueeze(1)
 
 
-def envmap_from_VSG(VSG, voxel_grid, pixel_batch, intrinsic, depth, normal):
+def envmap_from_VSG(VSG, voxel_grid, ls, down, pixel_batch, intrinsic, depth, normal):
     pixel_batch = pixel_batch[:, ::2, ::2]
-    cam_coord = (torch.inverse(intrinsic[:, None, None]) @ pixel_batch)
-    min_r = 0
-    max_r = 2 * 3**(1/2)
+    cam_coord = (depth[:, 0, ::2, ::2, None, None] * (torch.inverse(intrinsic[:, None, None]) @ pixel_batch)).squeeze(-1)
 
+    ldirections = ls.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+    camyProj = torch.einsum('b,abcd->acd', (down, normal)).unsqueeze(1).expand_as(normal) * normal
+    camy = F.normalize(down.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).expand_as(camyProj) - camyProj, dim=1)
+    camx = -F.normalize(torch.cross(camy, normal, dim=1), p=1, dim=1)
+
+    l = ldirections[:, :, 0:1, :, :] * camx.unsqueeze(1) \
+        + ldirections[:, :, 1:2, :, :] * camy.unsqueeze(1) \
+        + ldirections[:, :, 2:3, :, :] * normal.unsqueeze(1)
 
     VSG
 
