@@ -86,4 +86,4 @@ if __name__ == "__main__":
     phase = 'TRAIN'
     is_DDP = False
     resume = False
-    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage2_0.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')
+    train(gpu=0, num_gpu=1, debug=debug, phase='TRAIN', config='stage2_titan.yml', is_DDP=is_DDP, resume=resume, run_id='06271610_stage2')

@@ -91,15 +91,13 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 data['normal'] = curr_model.normal_net(rgbdc)
                 rgbdcn = torch.cat([rgbdc, 0.5 * (data['normal'] + 1)], dim=1)
                 axis, sharpness, intensity, vis = curr_model.DL_net(rgbdcn)
-                sharpness_hdr, intensity_hdr = helper_dict['sg2env'].SG_ldr2hdr(sharpness, intensity)
-                bn, _, _, rows, cols = axis.shape
-                data['DL'] = torch.cat([axis, sharpness_hdr, intensity_hdr], dim=2).reshape((bn, -1, rows, cols))
-
+                sharpness, intensity = helper_dict['sg2env'].SG_ldr2hdr(sharpness, intensity)
+                bn, _, _, DL_rows, DL_cols = axis.shape
             if save_image_flag:
-                DL = data['DL'].reshape(bn, cfg.DL.SGNum, 7, cfg.DL.env_rows, cfg.DL.env_cols)
-                data['envmaps_DL'] = helper_dict['sg2env'].fromSGtoIm(DL[:, :, :3], DL[:, :, 3:4], DL[:, :, 4:])
+                data['envmaps_DL'] = helper_dict['sg2env'].fromSGtoIm(axis, sharpness, intensity)
 
             pixels = helper_dict['pixels']
+            up = helper_dict['up']
             if helper_dict['pixels_norm'].size(0) != bn:
                 pixels_norm = helper_dict['pixels_norm'][:bn]
             else:
@@ -111,6 +109,9 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             else:
                 rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_est'], data['rgb'])
             normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
+
+            axis = normal2camera(data['normal'], axis, up)
+            data['DL'] = torch.cat([axis, sharpness, intensity], dim=2).reshape((bn, -1, DL_rows, DL_cols))
             DL_target = F.grid_sample(data['DL'], pixels_norm, align_corners=True, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
             featmaps_dense = F.grid_sample(featmaps, pixels_norm, align_corners=True, mode='bilinear').permute(0, 2, 3, 1)[:, :, :, None]
 
@@ -135,20 +136,20 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
             if cfg.mode == 'finetune':
                 if helper_dict['voxel_grid_front'].size(0) != bn:
                     voxel_grid_front = helper_dict['voxel_grid_front'][:bn]
-                    voxel_grid = torch.cat([helper_dict['voxel_grid_back'][:bn], voxel_grid_front], dim=-2)
+                    # voxel_grid = torch.cat([helper_dict['voxel_grid_back'][:bn], voxel_grid_front], dim=-2)
+                    ls = helper_dict['ls'][:bn]
                 else:
                     voxel_grid_front = helper_dict['voxel_grid_front']
-                    voxel_grid = torch.cat([helper_dict['voxel_grid_back'], voxel_grid_front], dim=-2)
+                    # voxel_grid = torch.cat([helper_dict['voxel_grid_back'], voxel_grid_front], dim=-2)
+                    ls = helper_dict['ls']
 
-                ls = helper_dict['ls']
-                down = helper_dict['down']
                 global_feature_volume = curr_model.GL_Net(x_encoded)
 
                 source = torch.cat([rgbdcn, albedo, rough, brdf_feature], dim=1)
                 visible_surface_volume = get_visible_surface_volume(voxel_grid_front, source, data['cam'][:, 0])
                 VSG = curr_model.VSG_Net(visible_surface_volume, global_feature_volume)
 
-                envmaps_SVL = envmap_from_VSG(VSG, voxel_grid, ls, down, pixels, data['cam'][:, 0], data['depth_norm'], data['normal'])
+                envmaps_SVL = envmap_from_VSG(VSG, ls, up, pixels, data['cam'][:, 0], data['depth_norm'], normal_pred)
 
             scalars_to_log['train/total_loss'] = total_loss.item()
 
@@ -176,20 +177,25 @@ def get_visible_surface_volume(voxel_grid, source, intrinsic):
     return visible_surface_volume * volume_weight_k.unsqueeze(1)
 
 
-def envmap_from_VSG(VSG, voxel_grid, ls, down, pixel_batch, intrinsic, depth, normal):
+def envmap_from_VSG(VSG, ls, up, pixel_batch, intrinsic, depth, normal):
     pixel_batch = pixel_batch[:, ::2, ::2]
     cam_coord = (depth[:, 0, ::2, ::2, None, None] * (torch.inverse(intrinsic[:, None, None]) @ pixel_batch)).squeeze(-1)
-
-    ldirections = ls.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-    camyProj = torch.einsum('b,abcd->acd', (down, normal)).unsqueeze(1).expand_as(normal) * normal
-    camy = F.normalize(down.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).expand_as(camyProj) - camyProj, dim=1)
-    camx = -F.normalize(torch.cross(camy, normal, dim=1), p=1, dim=1)
-
-    l = ldirections[:, :, 0:1, :, :] * camx.unsqueeze(1) \
-        + ldirections[:, :, 1:2, :, :] * camy.unsqueeze(1) \
-        + ldirections[:, :, 2:3, :, :] * normal.unsqueeze(1)
-
+    normal = normal[:, ::2, ::2, 0]
+    camyProj = torch.einsum('d,abcd->abc', (up, normal)).unsqueeze(-1) * normal
+    camy = F.normalize(up[None, None, None] - camyProj, dim=-1)
+    camx = -F.normalize(torch.cross(camy, normal, dim=-1), dim=-1)
+    axis = ls[..., 0:1] * camx[:, :, :, None] + ls[..., 0:1] * camy[:, :, :, None] + ls[..., 0:1] * normal[:, :, :, None] + cam_coord[:, :, :, None]
     VSG
+
+
+def normal2camera(normal, axis_org, up):
+    normal = normal[:, :, 3::8, 3::8]
+    camyProj = torch.einsum('b,abcd->acd', (up, normal)).unsqueeze(1) * normal
+    camy = F.normalize(up.unsqueeze(0).unsqueeze(-1).unsqueeze(-1) - camyProj, dim=1)
+    camx = -F.normalize(torch.cross(camy, normal, dim=1), dim=1)
+    axis = axis_org[:, :, 0:1, :, :] * camx.unsqueeze(1) + axis_org[:, :, 1:2, :, :] * camy.unsqueeze(1) + axis_org[:, :, 2:3, :,
+                                                                                                           :] * normal.unsqueeze(1)
+    return axis
 
 
 def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list):
@@ -226,6 +232,7 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list):
     #     cv2.imwrite(f'corner_0_{i}.png', cv2fromtorch(rgb_sampled[0, i]))
     #     cv2.imwrite(f'corner_1_{i}.png', cv2fromtorch(rgb_sampled[1, i]))
     viewdir = F.normalize((c2w_list[:, :, None, None, :3, :3] @ cam_coord_k)[..., 0], dim=-1)
+    viewdir[..., 1:] = -viewdir[..., 1:]  # because openrooms is using right, up, backward coordinates
     # weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
     # weight = weight / (torch.sum(weight, dim=1, keepdim=True) + TINY_NUMBER)
     # while True:

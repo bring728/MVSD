@@ -124,10 +124,10 @@ class Openrooms_FF(Dataset):
         batchDict['rough_gt'] = rough
 
         if self.mode == 'SVL' or self.mode == 'finetune':
-            envmaps = loadEnvmap(name_list[0].replace('_320', '').format('imenv', 'hdr'), self.cfg.SVL.env_height,
-                                 self.cfg.SVL.env_width, self.cfg.SVL.env_rows, self.cfg.SVL.env_cols)
-            # envmaps = loadEnvmap(name_list[0].replace('_320', '_env').format('imenv', 'hdr'), self.cfg.SVL.env_height,
+            # envmaps = loadEnvmap(name_list[0].replace('_320', '').format('imenv', 'hdr'), self.cfg.SVL.env_height,
             #                      self.cfg.SVL.env_width, self.cfg.SVL.env_rows, self.cfg.SVL.env_cols)
+            envmaps = loadEnvmap(name_list[0].replace('_320', '_env').format('imenv', 'hdr'), self.cfg.SVL.env_height,
+                                 self.cfg.SVL.env_width, self.cfg.SVL.env_rows, self.cfg.SVL.env_cols)
             envmaps = envmaps * scene_scale
             batchDict['envmaps_SVL_gt'] = envmaps.astype(np.float32)
         return batchDict

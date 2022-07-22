@@ -116,6 +116,8 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
         pixels_norm = torch.from_numpy(pixels_norm)
         pixels_norm = pixels_norm.to(gpu, non_blocking=cfg.pinned)[None].expand([cfg.batchsize, -1, -1, -1])
         helper_dict['pixels_norm'] = pixels_norm
+        up = torch.from_numpy(np.array([0, 1.0, 0], dtype=np.float32)).to(gpu, non_blocking=cfg.pinned)
+        helper_dict['up'] = up
         curr_model = MultiViewModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
         if cfg.mode == 'SVL' or cfg.mode == 'finetune':
             x, y, z = np.meshgrid(np.arange(cfg.SVL.vsg_res), np.arange(cfg.SVL.vsg_res), np.arange(cfg.SVL.vsg_res), indexing='xy')
@@ -145,11 +147,10 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
             lx = r * np.sin(El) * np.cos(Az)
             ly = r * np.sin(El) * np.sin(Az)
             lz = r * np.cos(El)
-            ls = torch.from_numpy(np.concatenate((lx, ly, lz), axis=1).astype(np.float32))
-            ls = ls.to(gpu, non_blocking=cfg.pinned)
+            ls = torch.from_numpy(np.concatenate((lx, ly, lz), axis=-1).astype(np.float32))
+            ls = ls.to(gpu, non_blocking=cfg.pinned)[None, None, None].expand([cfg.batchsize, -1, -1, -1, -1])
             helper_dict['ls'] = ls
-            down = torch.from_numpy(np.array([0, 1.0, 0], dtype=np.float32)).to(gpu, non_blocking=cfg.pinned)
-            helper_dict['down'] = down
+
         if do_watch:
             watch_model = []
             if cfg.mode == 'BRDF' or cfg.mode == 'finetune':
