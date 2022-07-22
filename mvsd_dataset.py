@@ -53,14 +53,14 @@ class Openrooms_FF(Dataset):
         scene, target_idx = self.nameList[ind].split('$')
         training_idx = self.idx_list.copy()
         training_idx.remove(target_idx)
-        random.shuffle(training_idx)
+        # random.shuffle(training_idx)
         all_idx = [target_idx, ] + training_idx
         scene = osp.join(self.dataRoot, scene)
         name_list = [scene + '{}_' + a + '.{}' for a in all_idx]
         batchDict['name'] = name_list[0]
         cam_mats = np.load(scene + 'cam_mats.npy')
-        if not cam_mats.shape == (3, 6, 9):
-            raise Exception(scene, ' cam mat shape error!')
+        # if not cam_mats.shape == (3, 6, 9):
+        #     raise Exception(scene, ' cam mat shape error!')
 
         max_depth = cam_mats[1, -1, int(target_idx) - 1].astype(np.float32)
         target_im = loadHdr(name_list[0].format('im', 'hdr'))

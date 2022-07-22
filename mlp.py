@@ -18,7 +18,7 @@ from utils import *
 
 
 class Transformer(nn.Module):
-    def __init__(self, dim, dim_head, mlp_hidden, final_hidden):
+    def __init__(self, dim, dim_head, mlp_hidden, final_hidden, output_dim):
         super().__init__()
         self.to_v_1 = nn.Sequential(
             nn.LayerNorm(dim),
@@ -28,8 +28,7 @@ class Transformer(nn.Module):
 
         self.net_1 = nn.Sequential(
             nn.LayerNorm(dim),
-            nn.Linear(dim, mlp_hidden),
-            nn.GELU(),
+            nn.Linear(dim, mlp_hidden), nn.GELU(),
             nn.Linear(mlp_hidden, dim),
         )
 
@@ -41,16 +40,15 @@ class Transformer(nn.Module):
 
         self.net_2 = nn.Sequential(
             nn.LayerNorm(dim),
-            nn.Linear(dim, mlp_hidden),
-            nn.GELU(),
+            nn.Linear(dim, mlp_hidden), nn.GELU(),
             nn.Linear(mlp_hidden, dim),
         )
 
         self.mlp_brdf = nn.Sequential(
             nn.LayerNorm(dim),
-            nn.Linear(dim, final_hidden),
-            nn.GELU(),
-            nn.Linear(final_hidden, final_hidden),
+            nn.Linear(dim, final_hidden), nn.GELU(),
+            nn.Linear(final_hidden, final_hidden), nn.GELU(),
+            nn.Linear(final_hidden, output_dim),
         )
 
     @autocast()
@@ -106,12 +104,11 @@ class MultiViewAggregation(nn.Module):
         self.pbr_mlp = nn.Sequential(nn.LayerNorm(input_ch),
                                      nn.Linear(input_ch, hidden), self.activation,
                                      nn.Linear(hidden, hidden), self.activation,
-                                     nn.Linear(hidden, hidden), self.activation,
                                      nn.Linear(hidden, cfg.BRDF.aggregation.pbr_feature_dim))
 
         input_ch = cfg.BRDF.context_feature.dim + 3 + cfg.BRDF.aggregation.pbr_feature_dim
         self.transformer = Transformer(input_ch, cfg.BRDF.aggregation.head_dim,
-                                       cfg.BRDF.aggregation.mlp_hidden, cfg.BRDF.aggregation.final_hidden)
+                                       cfg.BRDF.aggregation.mlp_hidden, cfg.BRDF.aggregation.final_hidden, cfg.BRDF.aggregation.brdf_feature_dim)
 
     @autocast()
     def forward(self, rgb, featmaps_dense, view_dir, proj_err, normal, DL):

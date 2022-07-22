@@ -47,10 +47,10 @@ class BasicBlock(nn.Module):
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv3x3(inplanes, planes, stride)
-        self.bn1 = norm_layer(planes, track_running_stats=False, affine=True)
+        self.bn1 = norm_layer(planes, track_running_stats=track_stats)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes)
-        self.bn2 = norm_layer(planes, track_running_stats=False, affine=True)
+        self.bn2 = norm_layer(planes, track_running_stats=track_stats)
         self.downsample = downsample
         self.stride = stride
 
@@ -73,7 +73,7 @@ class BasicBlock(nn.Module):
 
 
 class conv(nn.Module):
-    def __init__(self, num_in_layers, num_out_layers, kernel_size, stride):
+    def __init__(self, num_in_layers, num_out_layers, kernel_size, stride, norm):
         super(conv, self).__init__()
         self.kernel_size = kernel_size
         self.conv = nn.Conv2d(num_in_layers,
@@ -82,22 +82,28 @@ class conv(nn.Module):
                               stride=stride,
                               padding=(self.kernel_size - 1) // 2,
                               padding_mode='reflect')
-        self.bn = nn.InstanceNorm2d(num_out_layers, track_running_stats=False, affine=True)
+        if norm == 'instance':
+            self.bn = nn.InstanceNorm2d(num_out_layers, track_running_stats=track_stats)
+        elif norm == 'batch':
+            self.bn = nn.BatchNorm2d(num_out_layers, track_running_stats=track_stats)
+        else:
+            raise Exception('resunet error')
 
     def forward(self, x):
         return F.elu(self.bn(self.conv(x)), inplace=True)
 
 
 class upconv(nn.Module):
-    def __init__(self, num_in_layers, num_out_layers, kernel_size, scale):
+    def __init__(self, num_in_layers, num_out_layers, kernel_size, scale, norm):
         super(upconv, self).__init__()
         self.scale = scale
-        self.conv = conv(num_in_layers, num_out_layers, kernel_size, 1)
+        self.conv = conv(num_in_layers, num_out_layers, kernel_size, 1, norm)
 
     def forward(self, x):
         x = nn.functional.interpolate(x, scale_factor=self.scale, align_corners=True, mode='bilinear')
         return self.conv(x)
 
+track_stats = True
 
 class Context_ResUNet(nn.Module):
     def __init__(self, cfg):
@@ -117,7 +123,7 @@ class Context_ResUNet(nn.Module):
         self.groups = 1
         self.base_width = 64
         self.conv1 = nn.Conv2d(8, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False, padding_mode='reflect')
-        self.bn1 = norm_layer(self.inplanes, track_running_stats=False, affine=True)
+        self.bn1 = norm_layer(self.inplanes, track_running_stats=track_stats)
         self.relu = nn.ReLU(inplace=True)
 
         self.layer1 = self._make_layer(block, filters[0], layers[0], stride=1)
@@ -126,12 +132,12 @@ class Context_ResUNet(nn.Module):
         self.layer4 = self._make_layer(block, filters[3], layers[3], stride=2)
 
         # decoder
-        self.upconv4 = upconv(filters[3], filters[2], 3, 2)
-        self.iconv4 = conv(filters[2] + filters[2], filters[2], 3, 1)
-        self.upconv3 = upconv(filters[2], filters[1], 3, 2)
-        self.iconv3 = conv(filters[1] + filters[1], filters[1], 3, 1)
-        self.upconv2 = upconv(filters[1], filters[0], 3, 2)
-        self.iconv2 = conv(filters[0] + filters[0], cfg.dim, 3, 1)
+        self.upconv4 = upconv(filters[3], filters[2], 3, 2, cfg.norm_layer)
+        self.iconv4 = conv(filters[2] + filters[2], filters[2], 3, 1, cfg.norm_layer)
+        self.upconv3 = upconv(filters[2], filters[1], 3, 2, cfg.norm_layer)
+        self.iconv3 = conv(filters[1] + filters[1], filters[1], 3, 1, cfg.norm_layer)
+        self.upconv2 = upconv(filters[1], filters[0], 3, 2, cfg.norm_layer)
+        self.iconv2 = conv(filters[0] + filters[0], cfg.dim, 3, 1, cfg.norm_layer)
         # fine-level conv
         self.out_conv = nn.Conv2d(cfg.dim, cfg.dim, 1, 1)
 
@@ -145,7 +151,7 @@ class Context_ResUNet(nn.Module):
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
                 conv1x1(self.inplanes, planes * block.expansion, stride),
-                norm_layer(planes * block.expansion, track_running_stats=False, affine=True),
+                norm_layer(planes * block.expansion, track_running_stats=track_stats, ),
             )
 
         layers = []
@@ -159,19 +165,6 @@ class Context_ResUNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def skipconnect(self, x1, x2):
-        diffY = x2.size()[2] - x1.size()[2]
-        diffX = x2.size()[3] - x1.size()[3]
-
-        x1 = F.pad(x1, (diffX // 2, diffX - diffX // 2,
-                        diffY // 2, diffY - diffY // 2))
-
-        # for padding issues, see
-        # https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
-        # https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
-
-        x = torch.cat([x2, x1], dim=1)
-        return x
 
     def forward(self, x):
         x = self.relu(self.bn1(self.conv1(x)))
@@ -182,15 +175,15 @@ class Context_ResUNet(nn.Module):
         x_encoded = self.layer4(x3)
 
         x = self.upconv4(x_encoded)
-        x = self.skipconnect(x3, x)
+        x = torch.cat([x3, x], dim=1)
         x = self.iconv4(x)
 
         x = self.upconv3(x)
-        x = self.skipconnect(x2, x)
+        x = torch.cat([x2, x], dim=1)
         x = self.iconv3(x)
 
         x = self.upconv2(x)
-        x = self.skipconnect(x1, x)
+        x = torch.cat([x1, x], dim=1)
         x = self.iconv2(x)
 
         x_out = self.out_conv(x)
@@ -408,7 +401,7 @@ class DirectLightingNet(nn.Module):
 class BRDFRefineNet(nn.Module):
     def __init__(self, cfg):
         super(BRDFRefineNet, self).__init__()
-        input_ch = cfg.BRDF.aggregation.final_hidden + 8 + cfg.BRDF.context_feature.dim
+        input_ch = cfg.BRDF.aggregation.brdf_feature_dim + 8 + cfg.BRDF.context_feature.dim
         norm_layer = cfg.BRDF.refine.norm_layer
 
         self.input_norm = nn.BatchNorm2d(input_ch)

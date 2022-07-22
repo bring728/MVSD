@@ -1,7 +1,7 @@
 mode: BRDF
 
 nepoch: 30
-batchsize: 6
+batchsize: 7
 num_workers: 5
 lrate_decay_steps: 10000
 lrate_decay_factor: 1.0
@@ -12,7 +12,6 @@ normal:
   norm_layer: group
 
 DL:
-  unified_decoder: False
   norm_layer: batch
   SGNum: 4
   env_height: 8
@@ -27,7 +26,7 @@ BRDF:
 
   context_feature:
     dim: 32
-    norm_layer: instance
+    norm_layer: batch
     lr: 1e-4
 
   aggregation:
@@ -38,6 +37,7 @@ BRDF:
     head_dim: 16
     mlp_hidden: 16
     final_hidden: 32
+    brdf_feature_dim: 16
     lr: 1e-4
 
   refine:
@@ -61,7 +61,7 @@ SVL:
 imWidth: 320
 imHeight: 240
 num_view_all: 9
-num_view_min: 6
+no_sample_view: True
 autocast: True
 pinned: True
 randomseed: 3127

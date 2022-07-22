@@ -85,7 +85,7 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 scalars_to_log['train/total_loss'] = total_loss.item()
 
         elif stage == '2':
-            sample_view(data, 7 + np.random.choice(3, 1)[0], gt=cfg.BRDF.gt)
+            # sample_view(data, 7 + np.random.choice(3, 1)[0], gt=cfg.BRDF.gt)
             rgbdc = torch.cat([data['rgb'][:, 0], data['depth_norm'], data['conf']], dim=1)
             with torch.no_grad():
                 data['normal'] = curr_model.normal_net(rgbdc)
