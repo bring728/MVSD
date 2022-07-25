@@ -58,8 +58,13 @@ def load_id_wandb(config, record_flag, resume, root, id=None):
 
 
 def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag):
-    worker_per_gpu = cfg.num_workers
-    batch_per_gpu = cfg.batchsize
+    if debug:
+        worker_per_gpu = 0
+        batch_per_gpu = 4
+    else:
+        worker_per_gpu = cfg.num_workers
+        batch_per_gpu = cfg.batchsize
+
     if stage == '1':
         train_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TRAIN')
         val_dataset = Openrooms_FF_single(dataRoot, cfg, stage, 'TEST')
@@ -87,13 +92,13 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
     curr_model = None
 
     if stage == '1':
-        helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
         curr_model = SingleViewModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
         if do_watch:
             watch_model = []
             if cfg.mode == 'normal' or cfg.mode == 'finetune':
                 watch_model.append(curr_model.normal_net)
             if cfg.mode == 'DL' or cfg.mode == 'finetune':
+                helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
                 watch_model.append(curr_model.DL_net)
             wandb_obj.watch(watch_model, log='all')
 

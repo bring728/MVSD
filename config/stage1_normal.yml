@@ -1,16 +1,20 @@
 mode: normal
+normal_path: None
+
+align_corner: False
 
 nepoch: 80
-batchsize: 16
-num_workers: 6
+batchsize: 24
+num_workers: 4
 lrate_decay_steps: 10000
-lrate_decay_factor: 0.9
+lrate_decay_factor: 1.0
 
 normal:
-  lambda_mse: 0.3
+  depth_grad: True
+  lambda_mse: 1.0
   lambda_ang: 1.0
-  lr: 1e-4
-  norm_layer: group
+  lr: 1e-3
+  norm_layer: batch
 
 num_view_all: 9
 autocast: True

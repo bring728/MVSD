@@ -1,8 +1,7 @@
 import os
 
 from torch.utils.data import Dataset
-import time
-import random
+import cv2
 from utils import *
 from utils_geometry import *
 from utils_geometry import _34_to_44
@@ -199,9 +198,15 @@ class Openrooms_FF_single(Dataset):
         conf = loadBinary(name.format('conf', 'dat'))
         depthest = loadBinary(name.format('depthest', 'dat'))
         depth_norm = np.clip(depthest / max_depth, 0, 1)
-        # depth_norm = loadBinary(name.format('midas', 'dat'))
-        batchDict['input'] = np.concatenate([im, depth_norm, conf], axis=0).astype(np.float32)
+        if self.cfg.normal.depth_grad:
+            grad_x = cv2.Sobel(depth_norm, -1, 1, 0)
+            grad_y = cv2.Sobel(depth_norm, -1, 0, 1)
+            grad = cv2.addWeighted(grad_x, 0.5, grad_y, 0.5, 0)
+            batchDict['input'] = np.concatenate([im, depth_norm, conf, grad], axis=0).astype(np.float32)
+        else:
+            batchDict['input'] = np.concatenate([im, depth_norm, conf], axis=0).astype(np.float32)
 
+        # depth_norm = loadBinary(name.format('midas', 'dat'))
         # if self.stage == '1-1':
         #     normal = loadImage(name.format('imnormal', 'png'), normalize_01=False)
         #     normal = (normal / np.sqrt(np.maximum(np.sum(normal * normal, axis=0, keepdims=True), 1e-5))).astype(np.float32)

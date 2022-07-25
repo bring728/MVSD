@@ -226,7 +226,15 @@ def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride
 class NormalNet(nn.Module):
     def __init__(self, cfg):
         super(NormalNet, self).__init__()
-        self.layer_d_1 = make_layer(pad_type='rep', in_ch=5, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
+
+        if cfg.depth_grad:
+            input_ch = 6
+            self.input_norm = nn.BatchNorm2d(input_ch, affine=False)
+        else:
+            input_ch = 5
+            self.input_norm = None
+
+        self.layer_d_1 = make_layer(pad_type='rep', in_ch=input_ch, out_ch=64, kernel=4, stride=2, num_group=4, norm_layer=cfg.norm_layer)
         self.layer_d_2 = make_layer(in_ch=64, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=cfg.norm_layer)
         self.layer_d_3 = make_layer(in_ch=128, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
         self.layer_d_4 = make_layer(in_ch=256, out_ch=256, kernel=4, stride=2, num_group=16, norm_layer=cfg.norm_layer)
@@ -244,6 +252,9 @@ class NormalNet(nn.Module):
 
     @autocast()
     def forward(self, x):
+        if self.input_norm:
+            x = self.input_norm(x)
+
         x1 = self.layer_d_1(x)
         x2 = self.layer_d_2(x1)
         x3 = self.layer_d_3(x2)
@@ -369,7 +380,7 @@ class BRDFRefineNet(nn.Module):
         input_ch = cfg.BRDF.aggregation.brdf_feature_dim + 8 + cfg.BRDF.context_feature.dim
         norm_layer = cfg.BRDF.refine.norm_layer
 
-        self.input_norm = nn.BatchNorm2d(input_ch)
+        self.input_norm = nn.BatchNorm2d(input_ch, affine=False)
 
         self.refine_d_1 = make_layer(pad_type='rep', in_ch=input_ch, out_ch=128, kernel=4, stride=2, norm_layer=norm_layer)
         self.refine_d_2 = make_layer(in_ch=128, out_ch=128, kernel=4, stride=2, num_group=8, norm_layer=norm_layer)
