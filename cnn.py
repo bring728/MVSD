@@ -223,41 +223,6 @@ def make_layer(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride
     return nn.Sequential(*layers)
 
 
-def make_layer3D(pad_type='zeros', padding=1, in_ch=3, out_ch=64, kernel=3, stride=1, num_group=4, act='relu', norm_layer='group'):
-    act = act.lower()
-    pad_type = pad_type.lower()
-    norm_layer = norm_layer.lower()
-    layers = []
-    if pad_type == 'rep':
-        padding_mode = 'replicate'
-    elif pad_type == 'zeros':
-        padding_mode = 'zeros'
-    else:
-        assert 'not implemented pad'
-    layers.append(
-        nn.Conv3d(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel, stride=stride, bias=norm_layer != 'batch',
-                  padding_mode=padding_mode, padding=padding))
-
-    if norm_layer == 'group':
-        layers.append(nn.GroupNorm(num_groups=num_group, num_channels=out_ch))
-    elif norm_layer == 'batch':
-        layers.append(nn.BatchNorm2d(out_ch))
-    elif norm_layer == 'instance':
-        layers.append(nn.InstanceNorm2d(out_ch))
-    elif norm_layer == 'None':
-        norm = 'none'
-    else:
-        assert 'not implemented pad'
-
-    if act == 'relu':
-        layers.append(nn.ReLU(inplace=True))
-    elif act == 'None':
-        act = 'none'
-    else:
-        assert 'not implemented act'
-    return nn.Sequential(*layers)
-
-
 class NormalNet(nn.Module):
     def __init__(self, cfg):
         super(NormalNet, self).__init__()
