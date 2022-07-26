@@ -1,5 +1,3 @@
 .idea
 wandb
 CIS/cis_network_weights
-stage_train.py
-stage_train_DDP_wrapper.py

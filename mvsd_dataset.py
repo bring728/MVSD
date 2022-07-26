@@ -97,6 +97,11 @@ class Openrooms_FF(Dataset):
 
         conf = loadBinary(name_list[0].format('conf', 'dat'))
         depth_norm = np.clip(depthest_list[0] / max_depth, 0, 1)
+        if self.cfg.normal.depth_grad:
+            grad_x = cv2.Sobel(depth_norm, -1, 1, 0)
+            grad_y = cv2.Sobel(depth_norm, -1, 0, 1)
+            grad = cv2.addWeighted(grad_x, 0.5, grad_y, 0.5, 0)
+            batchDict['grad'] = grad.astype(np.float32)
 
         batchDict['rgb'] = np.stack(rgb_list, 0).astype(np.float32)
         batchDict['depth_est'] = np.stack(depthest_list, 0).astype(np.float32)

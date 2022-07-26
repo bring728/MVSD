@@ -1,13 +1,11 @@
 mode: normal
 normal_path: None
 
-align_corner: False
-
 nepoch: 80
 batchsize: 24
 num_workers: 4
 lrate_decay_steps: 10000
-lrate_decay_factor: 1.0
+lrate_decay_factor: 0.8
 
 normal:
   depth_grad: True

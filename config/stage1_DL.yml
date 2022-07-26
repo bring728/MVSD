@@ -1,18 +1,22 @@
 mode: DL
+normal_path: 07251343_stage1
 
-nepoch: 80
-batchsize: 16
-num_workers: 6
+nepoch: 100
+batchsize: 24
+num_workers: 4
 lrate_decay_steps: 10000
 lrate_decay_factor: 0.9
 
-normal_path: 07191109_stage1
+normal:
+  depth_grad: True
+  lambda_mse: 1.0
+  lambda_ang: 1.0
+  norm_layer: batch
 
 DL:
   lambda_vis_prior: 0.001
   lr: 1e-4
   scale_inv: True
-  unified_decoder: False
   norm_layer: batch
 
   SGNum: 4

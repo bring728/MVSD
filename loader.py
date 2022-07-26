@@ -46,7 +46,7 @@ def load_id_wandb(config, record_flag, resume, root, id=None):
             #         raise Exception('config does not match.')
     else:
         current_time = datetime.now().strftime('%m%d%H%M')
-        run_id = f'{current_time}_stage{stage}'
+        run_id = f'{current_time}_stage{stage}_{cfg.mode}'
         if record_flag:
             wandb_obj = wandb.init(project=f'MVSD-stage{stage}', id=run_id)
             wandb_obj.config.update(cfg)
@@ -93,12 +93,13 @@ def load_model(stage, cfg, gpu, experiment, phase, is_DDP, wandb_obj):
 
     if stage == '1':
         curr_model = SingleViewModel(cfg, gpu, experiment, phase=phase, is_DDP=is_DDP)
+        if cfg.mode == 'DL' or cfg.mode == 'finetune':
+            helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
         if do_watch:
             watch_model = []
             if cfg.mode == 'normal' or cfg.mode == 'finetune':
                 watch_model.append(curr_model.normal_net)
             if cfg.mode == 'DL' or cfg.mode == 'finetune':
-                helper_dict['sg2env'] = SG2env(cfg.DL.SGNum, envWidth=cfg.DL.env_width, envHeight=cfg.DL.env_height, gpu=gpu)
                 watch_model.append(curr_model.DL_net)
             wandb_obj.watch(watch_model, log='all')
 
