@@ -108,14 +108,14 @@ def model_forward(stage, phase, curr_model, helper_dict, data, cfg, scalars_to_l
                 rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_gt'], data['rgb'])
             else:
                 rgb_sampled, viewdir, proj_err = compute_projection(pixels, data['cam'], data['c2w'], data['depth_est'], data['rgb'])
-            normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None]
+            normal_pred = data['normal'].permute(0, 2, 3, 1)[:, :, :, None, None]
 
             axis = normal2camera(data['normal'], axis, up)
             data['DL'] = torch.cat([axis, sharpness, intensity], dim=2).reshape((bn, -1, DL_rows, DL_cols))
-            DL_target = F.grid_sample(data['DL'], pixels_norm, align_corners=True, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
-            featmaps_dense = F.grid_sample(featmaps, pixels_norm, align_corners=True, mode='bilinear').permute(0, 2, 3, 1)[:, :, :, None]
+            DL_target = F.grid_sample(data['DL'], pixels_norm, align_corners=False, mode='nearest').permute(0, 2, 3, 1)[:, :, :, None]
+            featmaps_dense = F.grid_sample(featmaps, pixels_norm, align_corners=False, mode='bilinear').permute(0, 2, 3, 1)[:, :, :, None]
 
-            brdf_feature = curr_model.aggregation_net(rgb_sampled, featmaps_dense, viewdir, proj_err, normal_pred, DL_target).permute(0, 3, 1, 2)
+            brdf_feature = curr_model.aggregation_net(rgb_sampled, featmaps_dense, viewdir.unsqueeze(-2), proj_err, normal_pred, DL_target).permute(0, 3, 1, 2)
             refine_input = torch.cat([rgbdcn, brdf_feature, featmaps_dense.squeeze(-2).permute(0, 3, 1, 2)], dim=1)
             albedo, rough = curr_model.brdf_refine_net(refine_input)
 
@@ -171,7 +171,7 @@ def get_visible_surface_volume(voxel_grid, source, intrinsic):
 
     resize_factor = torch.tensor([w, h]).to(pixel_coord.device)[None, None, None, None, :]
     pixel_coord_norm = (2 * (pixel_coord / resize_factor) - 1.).reshape(bn, c1, c2 * c3, 2)
-    unprojected_volume = F.grid_sample(source, pixel_coord_norm, align_corners=True, mode='bilinear').reshape(bn, c, c1, c2, c3)
+    unprojected_volume = F.grid_sample(source, pixel_coord_norm, align_corners=False, mode='bilinear').reshape(bn, c, c1, c2, c3)
     visible_surface_volume = torch.cat([unprojected_volume[:, :3], unprojected_volume[:, 5:]], dim=1)
     volume_weight_k = torch.exp(unprojected_volume[:, 4, ...] * -torch.pow(unprojected_volume[:, 3, ...] - voxel_grid[..., -1], 2))
     return visible_surface_volume * volume_weight_k.unsqueeze(1)
@@ -189,12 +189,11 @@ def envmap_from_VSG(VSG, ls, up, pixel_batch, intrinsic, depth, normal):
 
 
 def normal2camera(normal, axis_org, up):
-    normal = normal[:, :, 3::8, 3::8]
+    normal = F.adaptive_avg_pool2d(normal, (axis_org.size(-2), axis_org.size(-1)))
     camyProj = torch.einsum('b,abcd->acd', (up, normal)).unsqueeze(1) * normal
     camy = F.normalize(up.unsqueeze(0).unsqueeze(-1).unsqueeze(-1) - camyProj, dim=1)
     camx = -F.normalize(torch.cross(camy, normal, dim=1), dim=1)
-    axis = axis_org[:, :, 0:1, :, :] * camx.unsqueeze(1) + axis_org[:, :, 1:2, :, :] * camy.unsqueeze(1) + axis_org[:, :, 2:3, :,
-                                                                                                           :] * normal.unsqueeze(1)
+    axis = axis_org[:, :, 0:1] * camx.unsqueeze(1) + axis_org[:, :, 1:2] * camy.unsqueeze(1) + axis_org[:, :, 2:3] * normal.unsqueeze(1)
     return axis
 
 
@@ -216,8 +215,16 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list):
     resize_factor = torch.tensor([w, h]).to(pixel_coord_k_est.device)[None, None, None, None, :]
     pixel_coord_k_norm = (2.0 * (pixel_coord_k_est / resize_factor) - 1.).reshape([bn * vn, h, w, 2])
     pixel_rgbd_k = F.grid_sample(torch.cat([im_list, depth_list], dim=2).reshape([bn * vn, 4, h, w]), pixel_coord_k_norm,
-                                 align_corners=True, mode='bilinear').reshape([bn, vn, 4, h, w])
+                                 align_corners=False, mode='bilinear').reshape([bn, vn, 4, h, w])
     proj_err = pixel_depth_k_est - pixel_rgbd_k[:, :, -1, ..., None]
+    rgb_sampled = pixel_rgbd_k[:, :, :3].permute(0, 3, 4, 1, 2)
+
+    viewdir = F.normalize((c2w_list[:, :, None, None, :3, :3] @ cam_coord_k)[..., 0], dim=-1)
+    viewdir[..., :1] = -viewdir[..., :1]  # because openrooms is using right, up, backward coordinates and view dir is pixel -> camera
+    return rgb_sampled, viewdir.permute(0, 2, 3, 1, 4), proj_err.permute(0, 2, 3, 1, 4)
+
+
+
     # weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
     # weight = weight / (torch.sum(weight, dim=1, keepdim=True) + TINY_NUMBER)
     # for i in range(7):
@@ -226,13 +233,9 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list):
 
     # print(torch.mean(torch.abs(pixel_rgbd_k[0,0, -1] - depth_list[0, 0, 0])))
     # print(torch.mean(torch.abs(pixel_rgbd_k[0, 0, :3] - im_list[0, 0, :])))
-
-    rgb_sampled = pixel_rgbd_k[:, :, :3].permute(0, 3, 4, 1, 2)
     # for i in range(7):
     #     cv2.imwrite(f'corner_0_{i}.png', cv2fromtorch(rgb_sampled[0, i]))
     #     cv2.imwrite(f'corner_1_{i}.png', cv2fromtorch(rgb_sampled[1, i]))
-    viewdir = F.normalize((c2w_list[:, :, None, None, :3, :3] @ cam_coord_k)[..., 0], dim=-1)
-    viewdir[..., 1:] = -viewdir[..., 1:]  # because openrooms is using right, up, backward coordinates
     # weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
     # weight = weight / (torch.sum(weight, dim=1, keepdim=True) + TINY_NUMBER)
     # while True:
@@ -254,4 +257,3 @@ def compute_projection(pixel_batch, int_list, c2w_list, depth_list, im_list):
     #     rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
     #     cv2.imshow('asd', rgb)
     #     cv2.waitKey(0)
-    return rgb_sampled, viewdir.permute(0, 2, 3, 1, 4), proj_err.permute(0, 2, 3, 1, 4)

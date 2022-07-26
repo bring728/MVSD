@@ -96,10 +96,7 @@ class MultiViewAggregation(nn.Module):
         super(MultiViewAggregation, self).__init__()
         self.cfg = cfg
         self.activation = nn.ELU(inplace=True)
-        if cfg.BRDF.aggregation.input == 'vector':
-            input_ch = 7
-        else:
-            input_ch = 7
+        input_ch = 8 # intensity, sharp, fresnel, dot, dot, dot
         hidden = cfg.BRDF.aggregation.pbr_hidden
         self.pbr_mlp = nn.Sequential(nn.LayerNorm(input_ch),
                                      nn.Linear(input_ch, hidden), self.activation,
@@ -116,22 +113,25 @@ class MultiViewAggregation(nn.Module):
         weight = -torch.clamp(torch.log10(torch.abs(proj_err) + TINY_NUMBER), min=None, max=0)
         weight = weight / (torch.sum(weight, dim=-2, keepdim=True) + TINY_NUMBER)
 
-        DL = DL.reshape(bn, h, w, 1, self.cfg.DL.SGNum, 7)
-        # axis = DL[..., :3]
-        # DL_axis = axis / torch.clamp(torch.sqrt(torch.sum(axis * axis, dim=-1, keepdim=True)), min=1e-6)
-        if self.cfg.BRDF.aggregation.input == 'vector':
-            # DL[..., :3] = DL_axis
-            DL = DL.reshape((bn, h, w, 1, -1))
-            pbr_batch = torch.cat([torch.cat([normal, DL], dim=-1).expand(-1, -1, -1, num_views, -1), view_dir], dim=-1)
-        else:
-            DLdotN = torch.sum(DL[..., :3] * normal[:, :, :, :, None], dim=-1, keepdim=True)
-            hdotV = (torch.sum(DL[..., :3] * view_dir[:, :, :, :, None], dim=-1, keepdim=True) + 1) / 2
-            fresnel = torch.pow(2.0, (-5.55472 * hdotV - 6.98316) * hdotV)
+        DL = DL.reshape(bn, h, w, 1, self.cfg.DL.SGNum, 7).expand(-1, -1, -1, num_views, -1, -1)
+        DL_axis = DL[..., :3]
+        DL_sharp = 1 / (DL[..., 3:4] + 1)
+        DL_intensity = DL[..., 4:]
 
-            VdotN = torch.sum(view_dir * normal, dim=-1, keepdim=True).unsqueeze(-2).expand(-1, -1, -1, -1, self.cfg.DL.SGNum, -1)
-            pbr_batch = torch.cat([torch.cat([DLdotN, DL[..., 3:]], dim=-1).expand(-1, -1, -1, num_views, -1, -1), fresnel, VdotN], dim=-1)
-        # pbr_feature = self.pbr_mlp(pbr_batch).reshape(bn, h, w, num_views, -1)
-        pbr_feature = torch.sum(self.pbr_mlp(pbr_batch), dim=-2)
+        h = DL_axis + view_dir
+        h = h / torch.sqrt(torch.clamp(torch.sum(h * h, dim=-1, keepdim=True), min=1e-6))
+        NdotL = torch.clamp(torch.sum(DL_axis * normal, dim=-1, keepdim=True), min=0.0)
+        NdotV = torch.sum(view_dir * normal, dim=-1, keepdim=True).expand(-1, -1, -1, -1, self.cfg.DL.SGNum, -1)
+        NdotH_2 = torch.pow(torch.sum(normal * h, dim=-1, keepdim=True), 2.0)
+        hdotV = torch.sum(h * view_dir, dim=-1, keepdim=True)
+        fresnel = 0.95 * torch.pow(2.0, (-5.55472 * hdotV - 6.98316) * hdotV) + 0.05
+
+        pbr_batch = torch.cat([NdotL, DL_sharp, DL_intensity, NdotH_2, NdotV, fresnel], dim=-1)
+        pbr_feature_perSG = self.pbr_mlp(pbr_batch)
+
+        pbr_mask = NdotL * torch.sum(DL_intensity, dim=-1, keepdim=True)
+        notDark = (pbr_mask > 0.001).float()
+        pbr_feature = torch.sum(pbr_feature_perSG * notDark, dim=-2)
         rgb_feat_pbr = torch.cat([rgb, featmaps_dense.expand(-1, -1, -1, num_views, -1), pbr_feature], dim=-1)
         brdf_feature = self.transformer(rgb_feat_pbr, weight)
         return brdf_feature

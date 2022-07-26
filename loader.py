@@ -60,7 +60,7 @@ def load_id_wandb(config, record_flag, resume, root, id=None):
 def load_dataloader(stage, dataRoot, cfg, debug, is_DDP, num_gpu, record_flag):
     if debug:
         worker_per_gpu = 0
-        batch_per_gpu = 4
+        batch_per_gpu = 1
     else:
         worker_per_gpu = cfg.num_workers
         batch_per_gpu = cfg.batchsize
